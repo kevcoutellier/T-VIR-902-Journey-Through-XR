@@ -76,10 +76,61 @@ public class ChildNPC : MonoBehaviour
         // Ensure the "Child" tag is set so PlayerBlocker can detect us.
         try { if (!CompareTag("Child")) tag = "Child"; } catch { /* tag not defined yet — fine */ }
 
-        // Pick a mesh child to animate (fallback to self if none).
-        var rend = GetComponentInChildren<Renderer>();
-        _meshT = rend != null ? rend.transform : transform;
+        // Find (or create) a dedicated child "MeshHolder" that hosts the visual
+        // mesh. We NEVER animate the root transform — that transform is driven
+        // by NavMeshAgent and any position/rotation tweak we apply here would
+        // fight the agent (and the child would appear stuck).
+        _meshT = FindOrCreateMeshHolder();
         _meshStartLocalPos = _meshT.localPosition;
+    }
+
+    /// <summary>
+    /// Ensures the visual mesh lives on a dedicated child transform that we own.
+    /// If the root GameObject has MeshFilter/MeshRenderer, we move them onto
+    /// a child "MeshHolder" so animating it doesn't fight the NavMeshAgent.
+    /// </summary>
+    private Transform FindOrCreateMeshHolder()
+    {
+        // Already a named holder?
+        var existing = transform.Find("MeshHolder");
+        if (existing != null) return existing;
+
+        // Any existing child renderer will do.
+        var childRend = GetComponentInChildren<Renderer>(true);
+        if (childRend != null && childRend.transform != transform) return childRend.transform;
+
+        // Nothing suitable — migrate the root mesh to a child.
+        var holderGO = new GameObject("MeshHolder");
+        holderGO.transform.SetParent(transform, false);
+        holderGO.transform.localPosition = Vector3.zero;
+        holderGO.transform.localRotation = Quaternion.identity;
+        holderGO.transform.localScale = Vector3.one;
+
+        var rootFilter = GetComponent<MeshFilter>();
+        var rootRenderer = GetComponent<MeshRenderer>();
+        if (rootFilter != null && rootRenderer != null)
+        {
+            var mesh = rootFilter.sharedMesh;
+            var mats = rootRenderer.sharedMaterials;
+
+            // Destroy originals and re-create on the holder so we own them cleanly.
+            if (Application.isPlaying)
+            {
+                Destroy(rootRenderer);
+                Destroy(rootFilter);
+            }
+            else
+            {
+                DestroyImmediate(rootRenderer);
+                DestroyImmediate(rootFilter);
+            }
+
+            var newFilter = holderGO.AddComponent<MeshFilter>();
+            newFilter.sharedMesh = mesh;
+            var newRenderer = holderGO.AddComponent<MeshRenderer>();
+            newRenderer.sharedMaterials = mats;
+        }
+        return holderGO.transform;
     }
 
     private void OnEnable()
