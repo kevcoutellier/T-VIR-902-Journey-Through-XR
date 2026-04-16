@@ -1,10 +1,15 @@
+using System.Collections;
 using TMPro;
 using UnityEngine;
 
 /// <summary>
 /// STOP IT! — ScenarioUI
-/// World-space canvas that shows the timer, scenario name, and result feedback.
-/// Attach to a Canvas in the scene. The canvas should face the player at all times.
+/// World-space canvas showing timer, scenario name, score, feedback.
+///
+/// UX upgrades:
+///  • Timer pulses (scale + color) when urgent threshold is reached.
+///  • Feedback text bounces in on state change (success/fail).
+///  • Billboarding toward the player camera.
 /// </summary>
 public class ScenarioUI : MonoBehaviour
 {
@@ -15,26 +20,33 @@ public class ScenarioUI : MonoBehaviour
     public TextMeshProUGUI scoreText;
 
     [Header("Settings")]
-    [Tooltip("Name/description shown for this scenario")]
     public string scenarioName = "Salon — La prise électrique";
-
-    [Tooltip("Feedback messages")]
     public string successMessage = "BIEN JOUÉ ! ✓";
     public string failMessage = "TROP TARD ! ✗";
     public string gameOverMessage = "FIN DE PARTIE";
 
     [Header("Colors")]
     public Color normalTimerColor = Color.white;
-    public Color urgentTimerColor = Color.red;
-    [Tooltip("Timer goes red when below this threshold (seconds)")]
+    public Color urgentTimerColor = new Color(1f, 0.2f, 0.2f);
     public float urgentThreshold = 8f;
+
+    [Header("Animation")]
+    public float urgentPulseFrequency = 3f;
+    public float urgentPulseAmplitude = 0.15f;
+
+    private Vector3 _timerBaseScale = Vector3.one;
+    private Coroutine _feedbackBounce;
 
     // ── Unity ──────────────────────────────────────────────────────────────
     private void Start()
     {
         if (scenarioNameText) scenarioNameText.text = scenarioName;
         if (feedbackText) feedbackText.text = string.Empty;
-        if (timerText) timerText.color = normalTimerColor;
+        if (timerText)
+        {
+            timerText.color = normalTimerColor;
+            _timerBaseScale = timerText.rectTransform.localScale;
+        }
 
         if (GameManager.Instance != null)
         {
@@ -58,8 +70,10 @@ public class ScenarioUI : MonoBehaviour
     private void LateUpdate()
     {
         if (Camera.main == null) return;
-        transform.LookAt(Camera.main.transform);
-        transform.Rotate(0f, 180f, 0f);
+        Vector3 toCam = Camera.main.transform.position - transform.position;
+        toCam.y = 0f;
+        if (toCam.sqrMagnitude > 0.001f)
+            transform.rotation = Quaternion.LookRotation(-toCam, Vector3.up);
     }
 
     // ── Event handlers ─────────────────────────────────────────────────────
@@ -68,7 +82,19 @@ public class ScenarioUI : MonoBehaviour
         if (timerText == null) return;
         int secs = Mathf.CeilToInt(remaining);
         timerText.text = $"{secs:00}";
-        timerText.color = remaining <= urgentThreshold ? urgentTimerColor : normalTimerColor;
+
+        bool urgent = remaining <= urgentThreshold;
+        timerText.color = urgent ? urgentTimerColor : normalTimerColor;
+
+        if (urgent)
+        {
+            float pulse = 1f + Mathf.Abs(Mathf.Sin(Time.time * Mathf.PI * urgentPulseFrequency)) * urgentPulseAmplitude;
+            timerText.rectTransform.localScale = _timerBaseScale * pulse;
+        }
+        else
+        {
+            timerText.rectTransform.localScale = _timerBaseScale;
+        }
     }
 
     private void OnStateChanged(GameManager.GameState state)
@@ -78,19 +104,20 @@ public class ScenarioUI : MonoBehaviour
         {
             case GameManager.GameState.Playing:
                 feedbackText.text = string.Empty;
-                if (timerText) timerText.color = normalTimerColor;
+                if (timerText)
+                {
+                    timerText.color = normalTimerColor;
+                    timerText.rectTransform.localScale = _timerBaseScale;
+                }
                 break;
             case GameManager.GameState.Success:
-                feedbackText.text = successMessage;
-                feedbackText.color = Color.green;
+                BounceFeedback(successMessage, new Color(0.2f, 1f, 0.4f));
                 break;
             case GameManager.GameState.Fail:
-                feedbackText.text = failMessage;
-                feedbackText.color = Color.red;
+                BounceFeedback(failMessage, new Color(1f, 0.25f, 0.25f));
                 break;
             case GameManager.GameState.GameOver:
-                feedbackText.text = gameOverMessage;
-                feedbackText.color = Color.yellow;
+                BounceFeedback(gameOverMessage, new Color(1f, 0.9f, 0.2f));
                 if (timerText) timerText.text = "00";
                 break;
         }
@@ -99,5 +126,35 @@ public class ScenarioUI : MonoBehaviour
     private void OnScoreUpdated(int current, int total)
     {
         if (scoreText) scoreText.text = $"{current} / {total}";
+    }
+
+    private void BounceFeedback(string message, Color color)
+    {
+        if (feedbackText == null) return;
+        feedbackText.text = message;
+        feedbackText.color = color;
+        if (_feedbackBounce != null) StopCoroutine(_feedbackBounce);
+        _feedbackBounce = StartCoroutine(FeedbackBounceRoutine());
+    }
+
+    private IEnumerator FeedbackBounceRoutine()
+    {
+        var rt = feedbackText.rectTransform;
+        float elapsed = 0f;
+        const float duration = 0.5f;
+        Vector3 startScale = Vector3.one * 0.2f;
+        Vector3 endScale = Vector3.one * 1f;
+        while (elapsed < duration)
+        {
+            elapsed += Time.deltaTime;
+            float t = elapsed / duration;
+            float eased = 1f - Mathf.Pow(1f - t, 4f); // ease-out quart
+            // Overshoot a bit to feel punchy
+            float overshoot = 1f + 0.15f * Mathf.Sin(t * Mathf.PI);
+            rt.localScale = Vector3.Lerp(startScale, endScale * overshoot, eased);
+            yield return null;
+        }
+        rt.localScale = endScale;
+        _feedbackBounce = null;
     }
 }
