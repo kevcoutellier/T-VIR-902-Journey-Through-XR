@@ -115,6 +115,54 @@ public static class StopItBuildTools
         return tmp;
     }
 
+    [MenuItem("Tools/STOP IT/Setup UX (Indicator + Vignette + Countdown + Shake)")]
+    public static void SetupUX()
+    {
+        var child = Object.FindAnyObjectByType<ChildNPC>();
+        var hazard = Object.FindAnyObjectByType<HazardZone>();
+        var canvasGO = GameObject.Find("ScenarioCanvas");
+        var gm = Object.FindAnyObjectByType<GameManager>();
+
+        if (hazard == null) { Debug.LogError("[STOP IT] No HazardZone found."); return; }
+
+        // 1) Hazard indicator (floating arrow)
+        var existingIndicator = Object.FindAnyObjectByType<HazardIndicator>();
+        if (existingIndicator == null)
+        {
+            var go = new GameObject("HazardIndicator");
+            var ind = go.AddComponent<HazardIndicator>();
+            ind.hazard = hazard;
+            Debug.Log("[STOP IT] HazardIndicator created.");
+        }
+
+        // 2) Danger vignette on GameManager
+        if (gm != null && gm.GetComponent<DangerVignette>() == null)
+        {
+            var v = gm.gameObject.AddComponent<DangerVignette>();
+            v.hazard = hazard;
+            Debug.Log("[STOP IT] DangerVignette added to GameManager.");
+        }
+
+        // 3) Intro countdown on ScenarioCanvas
+        if (canvasGO != null && canvasGO.GetComponent<ScenarioIntroCountdown>() == null)
+        {
+            var c = canvasGO.AddComponent<ScenarioIntroCountdown>();
+            c.child = child;
+            Debug.Log("[STOP IT] ScenarioIntroCountdown added to ScenarioCanvas.");
+        }
+
+        // 4) Camera shake on main camera (auto-added at runtime too, but we can pre-create it)
+        var cam = Camera.main;
+        if (cam != null && cam.GetComponent<CameraShake>() == null)
+        {
+            cam.gameObject.AddComponent<CameraShake>();
+            Debug.Log("[STOP IT] CameraShake added to Main Camera.");
+        }
+
+        if (!Application.isPlaying) UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
+        Debug.Log("[STOP IT] UX setup complete!");
+    }
+
     [MenuItem("Tools/STOP IT/Fix Hand Colliders")]
     public static void FixHandColliders()
     {
