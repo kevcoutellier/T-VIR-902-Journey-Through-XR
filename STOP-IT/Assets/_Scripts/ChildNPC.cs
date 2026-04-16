@@ -85,13 +85,16 @@ public class ChildNPC : MonoBehaviour
     {
         yield return new WaitForSeconds(startDelay);
 
-        if (_isStopped) yield break;
+        if (_isStopped || targetHazard == null) yield break;
 
         if (laughClip != null && audioSource != null)
             audioSource.PlayOneShot(laughClip);
 
-        _agent.SetDestination(targetHazard.transform.position);
-        _isMoving = true;
+        if (_agent.isOnNavMesh)
+        {
+            _agent.SetDestination(targetHazard.transform.position);
+            _isMoving = true;
+        }
     }
 
     private IEnumerator PlayLaughAndFreeze()

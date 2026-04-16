@@ -13,12 +13,15 @@ public static class StopItBuildTools
     [MenuItem("Tools/STOP IT/Bake NavMesh")]
     public static void BakeNavMesh()
     {
-        var surface = Object.FindAnyObjectByType<NavMeshSurface>();
-        if (surface == null) { Debug.LogError("[STOP IT] No NavMeshSurface found. Add one to the Floor."); return; }
-        surface.BuildNavMesh();
-        EditorUtility.SetDirty(surface);
+        var surfaces = Object.FindObjectsByType<NavMeshSurface>(FindObjectsSortMode.None);
+        if (surfaces.Length == 0) { Debug.LogError("[STOP IT] No NavMeshSurface found."); return; }
+        foreach (var surface in surfaces)
+        {
+            surface.BuildNavMesh();
+            EditorUtility.SetDirty(surface);
+        }
         if (!Application.isPlaying) UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
-        Debug.Log("[STOP IT] NavMesh baked.");
+        Debug.Log("[STOP IT] NavMesh baked on " + surfaces.Length + " surfaces.");
     }
 
     [MenuItem("Tools/STOP IT/Setup Scene")]
@@ -131,6 +134,130 @@ public static class StopItBuildTools
         }
         if (count == 0) Debug.Log("[STOP IT] Hand colliders already present.");
         if (!Application.isPlaying) UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
+    }
+
+    [MenuItem("Tools/STOP IT/Wire Scenarios")]
+    public static void WireScenarios()
+    {
+        var sm = Object.FindAnyObjectByType<ScenarioManager>();
+        if (sm == null) { Debug.LogError("[STOP IT] ScenarioManager not found."); return; }
+
+        var childNPC = Object.FindAnyObjectByType<ChildNPC>();
+        var scenarioUI = Object.FindAnyObjectByType<ScenarioUI>();
+
+        sm.childNPC = childNPC;
+        sm.scenarioUI = scenarioUI;
+
+        // Define all 5 scenarios
+        var configs = new ScenarioManager.ScenarioConfig[5];
+
+        // 1. Living Room - fork in outlet
+        configs[0] = new ScenarioManager.ScenarioConfig
+        {
+            scenarioName = "Salon — La prise électrique",
+            childSpawnPoint = FindTransform("SpawnChild_Salon"),
+            hazardZone = FindHazard("HazardZone_Outlet"),
+            playerSpawnPoint = FindTransform("SpawnPlayer_Salon"),
+            scenarioObjects = new GameObject[0]
+        };
+
+        // 2. Kitchen - cat in microwave
+        configs[1] = new ScenarioManager.ScenarioConfig
+        {
+            scenarioName = "Cuisine — Le chat dans le micro-ondes",
+            childSpawnPoint = FindTransform("SpawnChild_Kitchen"),
+            hazardZone = FindHazard("HazardZone_Microwave"),
+            playerSpawnPoint = FindTransform("SpawnPlayer_Kitchen"),
+            scenarioObjects = new GameObject[0]
+        };
+
+        // 3. Bathroom - cleaning product
+        configs[2] = new ScenarioManager.ScenarioConfig
+        {
+            scenarioName = "Salle de bain — Le produit ménager",
+            childSpawnPoint = FindTransform("SpawnChild_Bathroom"),
+            hazardZone = FindHazard("HazardZone_CleaningProduct"),
+            playerSpawnPoint = FindTransform("SpawnPlayer_Bathroom"),
+            scenarioObjects = new GameObject[0]
+        };
+
+        // 4. Stairs - skateboard
+        configs[3] = new ScenarioManager.ScenarioConfig
+        {
+            scenarioName = "Escalier — Le skateboard",
+            childSpawnPoint = FindTransform("SpawnChild_Stairs"),
+            hazardZone = FindHazard("HazardZone_StairsBottom"),
+            playerSpawnPoint = FindTransform("SpawnPlayer_Stairs"),
+            scenarioObjects = new GameObject[0]
+        };
+
+        // 5. Bedroom - climbing window ledge
+        configs[4] = new ScenarioManager.ScenarioConfig
+        {
+            scenarioName = "Chambre — Le rebord de fenêtre",
+            childSpawnPoint = FindTransform("SpawnChild_Bedroom"),
+            hazardZone = FindHazard("HazardZone_Window"),
+            playerSpawnPoint = FindTransform("SpawnPlayer_Bedroom"),
+            scenarioObjects = new GameObject[0]
+        };
+
+        sm.scenarios = configs;
+        EditorUtility.SetDirty(sm);
+
+        // Also wire the first scenario's hazard to childNPC
+        if (childNPC != null && configs[0].hazardZone != null)
+        {
+            childNPC.targetHazard = configs[0].hazardZone;
+            EditorUtility.SetDirty(childNPC);
+        }
+
+        if (!Application.isPlaying) UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
+        Debug.Log("[STOP IT] All 5 scenarios wired to ScenarioManager!");
+    }
+
+    private static Transform FindTransform(string name)
+    {
+        var go = GameObject.Find(name);
+        return go != null ? go.transform : null;
+    }
+
+    private static HazardZone FindHazard(string name)
+    {
+        var go = GameObject.Find(name);
+        return go != null ? go.GetComponent<HazardZone>() : null;
+    }
+
+    private static GameObject[] FindRoomObjects(string roomName)
+    {
+        var go = GameObject.Find(roomName);
+        return go != null ? new GameObject[] { go } : new GameObject[0];
+    }
+
+    [MenuItem("Tools/STOP IT/Create Menu")]
+    public static void CreateMenu()
+    {
+        // Delete existing menu if any
+        var existing = GameObject.Find("ScenarioMenu");
+        if (existing != null) Object.DestroyImmediate(existing);
+
+        var menuGO = new GameObject("ScenarioMenu");
+        var canvas = menuGO.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.WorldSpace;
+
+        var rt = menuGO.GetComponent<RectTransform>();
+        // Place menu in center of living room, facing south (toward player spawn)
+        rt.position = new Vector3(-3, 1.5f, 0);
+        rt.rotation = Quaternion.Euler(0, 180, 0);
+        rt.sizeDelta = new Vector2(500, 400);
+        rt.localScale = new Vector3(0.005f, 0.005f, 0.005f);
+
+        menuGO.AddComponent<UnityEngine.XR.Interaction.Toolkit.UI.TrackedDeviceGraphicRaycaster>();
+        var menu = menuGO.AddComponent<ScenarioMenu>();
+        menu.scenarioManager = Object.FindAnyObjectByType<ScenarioManager>();
+
+        EditorUtility.SetDirty(menuGO);
+        if (!Application.isPlaying) UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
+        Debug.Log("[STOP IT] ScenarioMenu created!");
     }
 
     [MenuItem("Tools/STOP IT/Fix XR Camera")]
