@@ -99,9 +99,18 @@ public class ScenarioUI : MonoBehaviour
 
     private void OnStateChanged(GameManager.GameState state)
     {
+        // Hide HUD when in menu
+        bool showHUD = state != GameManager.GameState.Menu;
+        if (timerText) timerText.gameObject.SetActive(showHUD);
+        if (scenarioNameText) scenarioNameText.gameObject.SetActive(showHUD);
+        if (scoreText) scoreText.gameObject.SetActive(showHUD);
+        if (feedbackText) feedbackText.gameObject.SetActive(showHUD);
+
         if (feedbackText == null) return;
         switch (state)
         {
+            case GameManager.GameState.Menu:
+                break;
             case GameManager.GameState.Playing:
                 feedbackText.text = string.Empty;
                 if (timerText)
@@ -156,5 +165,12 @@ public class ScenarioUI : MonoBehaviour
         }
         rt.localScale = endScale;
         _feedbackBounce = null;
+    }
+
+    /// <summary>Called by ScenarioManager to update the displayed scenario name.</summary>
+    public void SetScenarioName(string name)
+    {
+        scenarioName = name;
+        if (scenarioNameText) scenarioNameText.text = name;
     }
 }

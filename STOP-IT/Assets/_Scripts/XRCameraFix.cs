@@ -16,6 +16,10 @@ public class XRCameraFix : MonoBehaviour
     {
         var xrOrigin = FindAnyObjectByType<XROrigin>();
         if (xrOrigin == null) return;
+
+        // Force floor-level tracking for Meta Quest
+        xrOrigin.RequestedTrackingOriginMode = XROrigin.TrackingOriginMode.Floor;
+
         if (xrOrigin.Camera != null) return;   // déjà assigné
 
         // Chercher la caméra dans les enfants (y compris inactifs)

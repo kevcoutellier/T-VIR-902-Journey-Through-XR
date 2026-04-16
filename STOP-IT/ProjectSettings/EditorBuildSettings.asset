@@ -12,8 +12,8 @@ EditorBuildSettings:
     path: Assets/_Scenes/LivingRoom.unity
     guid: 742f2166dd294834e906c186c4ca3aae
   m_configObjects:
+    Unity.XR.Oculus.Settings: {fileID: 11400000, guid: 6c8defffd1df37744909b11e755ff6ec, type: 2}
     com.unity.dt.app-ui: {fileID: 11400000, guid: 1b1c20d82303e4b5781c3ef50ac1449f, type: 2}
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
     com.unity.xr.management.loader_settings: {fileID: 11400000, guid: 62862860ebcb2a74887d4c10b14ec5cc, type: 2}
     com.unity.xr.openxr.settings4: {fileID: 11400000, guid: 0a86f0ddae49b0843b43f2ab8643e49b, type: 2}
-    xr.sdk.mock-hmd.settings: {fileID: 11400000, guid: 42c5064cb772aec40a9a89a7c8d78cdd, type: 2}

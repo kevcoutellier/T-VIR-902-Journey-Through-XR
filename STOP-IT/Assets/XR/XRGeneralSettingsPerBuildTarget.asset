@@ -14,6 +14,20 @@ MonoBehaviour:
   m_EditorClassIdentifier: Unity.XR.Management::UnityEngine.XR.Management.XRGeneralSettings
   m_LoaderManagerInstance: {fileID: 8124765313174820312}
   m_InitManagerOnStart: 1
+--- !u!114 &-1460089525194720218
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d236b7d11115f2143951f1e14045df39, type: 3}
+  m_Name: Android Settings
+  m_EditorClassIdentifier: Unity.XR.Management::UnityEngine.XR.Management.XRGeneralSettings
+  m_LoaderManagerInstance: {fileID: 2906124092277863691}
+  m_InitManagerOnStart: 1
 --- !u!114 &11400000
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -26,10 +40,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d2dc886499c26824283350fa532d087d, type: 3}
   m_Name: XRGeneralSettingsPerBuildTarget
   m_EditorClassIdentifier: Unity.XR.Management.Editor::UnityEditor.XR.Management.XRGeneralSettingsPerBuildTarget
-  Keys: 010000000d000000
+  Keys: 010000000d00000007000000
   Values:
   - {fileID: -6951173711440705613}
   - {fileID: 505241899888245946}
+  - {fileID: -1460089525194720218}
 --- !u!114 &505241899888245946
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -44,6 +59,23 @@ MonoBehaviour:
   m_EditorClassIdentifier: Unity.XR.Management::UnityEngine.XR.Management.XRGeneralSettings
   m_LoaderManagerInstance: {fileID: 8960485530301847772}
   m_InitManagerOnStart: 1
+--- !u!114 &2906124092277863691
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f4c3631f5e58749a59194e0cf6baf6d5, type: 3}
+  m_Name: Android Providers
+  m_EditorClassIdentifier: Unity.XR.Management::UnityEngine.XR.Management.XRManagerSettings
+  m_RequiresSettingsUpdate: 0
+  m_AutomaticLoading: 0
+  m_AutomaticRunning: 0
+  m_Loaders:
+  - {fileID: 11400000, guid: dab759b17c40f4f4ab61448e00fa2ef2, type: 2}
 --- !u!114 &8124765313174820312
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -60,8 +92,7 @@ MonoBehaviour:
   m_AutomaticLoading: 0
   m_AutomaticRunning: 0
   m_Loaders:
-  - {fileID: 11400000, guid: dab759b17c40f4f4ab61448e00fa2ef2, type: 2}
-  - {fileID: 11400000, guid: 82d2fcd2802fc9d43a20bab847d47e28, type: 2}
+  - {fileID: 11400000, guid: 02fad11bb0553864cb077e93537e950b, type: 2}
 --- !u!114 &8960485530301847772
 MonoBehaviour:
   m_ObjectHideFlags: 0
