@@ -213,6 +213,7 @@ public class HazardZone : MonoBehaviour
         go.transform.SetParent(transform, false);
         go.transform.localPosition = Vector3.zero;
         sparks = go.AddComponent<ParticleSystem>();
+        sparks.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
         var main = sparks.main;
         main.duration = 2f;
         main.loop = true;
@@ -238,6 +239,7 @@ public class HazardZone : MonoBehaviour
         go.transform.SetParent(transform, false);
         go.transform.localPosition = Vector3.up * 0.2f;
         confetti = go.AddComponent<ParticleSystem>();
+        confetti.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
         var main = confetti.main;
         main.duration = 1.2f;
         main.loop = false;

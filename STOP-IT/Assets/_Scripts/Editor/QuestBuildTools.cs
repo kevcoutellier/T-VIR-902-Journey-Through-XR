@@ -68,7 +68,6 @@ public static class QuestBuildTools
         // Keep "Run In Background" off — Quest pauses the app on dashboard
         PlayerSettings.runInBackground = false;
 
-        EditorUtility.SetDirty(PlayerSettings.GetSerializedObject().targetObject);
         AssetDatabase.SaveAssets();
         Debug.Log("[STOP IT] Android settings configured for Quest 3 (ARM64 / IL2CPP / Vulkan).");
     }

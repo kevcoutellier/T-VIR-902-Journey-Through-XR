@@ -119,10 +119,12 @@ public class DesktopTestRig : MonoBehaviour
         if (forceDesktopMode) return true;
         if (Application.isMobilePlatform && disableOnAndroid) return false;
 
-        // If an HMD is connected and active, defer to XR.
+        // If an opaque HMD is connected and actively rendering, defer to XR.
+        // Note: in the Unity Editor, the XR subsystem initialises even without a physical headset —
+        // displayOpaque disambiguates an actual opaque VR device from a dormant subsystem.
         var displays = new System.Collections.Generic.List<UnityEngine.XR.XRDisplaySubsystem>();
-        UnityEngine.XR.SubsystemManager.GetSubsystems(displays);
-        foreach (var d in displays) if (d != null && d.running) return false;
+        SubsystemManager.GetSubsystems(displays);
+        foreach (var d in displays) if (d != null && d.running && d.displayOpaque) return false;
 
         return true;
     }

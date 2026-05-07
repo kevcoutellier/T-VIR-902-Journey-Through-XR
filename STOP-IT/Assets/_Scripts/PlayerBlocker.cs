@@ -62,8 +62,10 @@ public class PlayerBlocker : MonoBehaviour
         // XRBaseController is the historical name used in XRI < 3.x; in 3.x it lives under
         // UnityEngine.XR.Interaction.Toolkit. Both ship as part of the package, so we can call
         // SendHapticImpulse via reflection-light: try the modern controller first, fall back to legacy.
+#pragma warning disable CS0618
         var controller = GetComponentInParent<XRBaseController>();
         if (controller != null)
             controller.SendHapticImpulse(hapticAmplitude, hapticDuration);
+#pragma warning restore CS0618
     }
 }

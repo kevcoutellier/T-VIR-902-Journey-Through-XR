@@ -13,7 +13,7 @@ public static class StopItBuildTools
     [MenuItem("Tools/STOP IT/Bake NavMesh")]
     public static void BakeNavMesh()
     {
-        var surfaces = Object.FindObjectsByType<NavMeshSurface>(FindObjectsSortMode.None);
+        var surfaces = Object.FindObjectsByType<NavMeshSurface>(FindObjectsInactive.Exclude);
         if (surfaces.Length == 0) { Debug.LogError("[STOP IT] No NavMeshSurface found."); return; }
         foreach (var surface in surfaces)
         {

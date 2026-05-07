@@ -29,12 +29,16 @@ public class ChildGrabber : MonoBehaviour
     public bool drawGizmo = true;
 
     private ChildNPC _heldChild;
+#pragma warning disable CS0618
     private XRBaseController _controller;
+#pragma warning restore CS0618
     private static readonly Collider[] _overlapBuffer = new Collider[8];
 
     private void Awake()
     {
+#pragma warning disable CS0618
         _controller = GetComponentInParent<XRBaseController>();
+#pragma warning restore CS0618
     }
 
     /// <summary>
