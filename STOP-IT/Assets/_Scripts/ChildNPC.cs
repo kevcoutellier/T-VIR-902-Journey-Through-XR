@@ -13,6 +13,8 @@ using UnityEngine.AI;
 ///  • Subtly looks toward the hazard.
 ///  • Reacts to player interception with a cartoon bounce + laugh.
 /// </summary>
+// Run AFTER ScenarioManager (-50) so targetHazard is already up-to-date when we react to state changes.
+[DefaultExecutionOrder(0)]
 [RequireComponent(typeof(NavMeshAgent))]
 public class ChildNPC : MonoBehaviour
 {
@@ -57,6 +59,8 @@ public class ChildNPC : MonoBehaviour
     private NavMeshAgent _agent;
     private bool _isMoving = false;
     private bool _isStopped = false;
+    private bool _held = false;
+    private Transform _originalParent;
     private Vector3 _lastTargetPos;
     private float _nextRepathTime;
     private Vector3 _meshStartLocalPos;
@@ -205,6 +209,69 @@ public class ChildNPC : MonoBehaviour
         GameManager.Instance?.ReportSuccess();
     }
 
+    /// <summary>
+    /// Called by ChildGrabber when the player grips near the child.
+    /// One-shot: grabbing the baby IS the win — the scenario succeeds immediately,
+    /// the baby is parented to the player's hand for a satisfying "saved them" beat.
+    /// </summary>
+    public void Grab(Transform attachPoint)
+    {
+        if (_isStopped || _held || attachPoint == null) return;
+        _isStopped = true;
+        _isMoving = false;
+        _held = true;
+
+        // Stop pathing first so we can safely re-parent.
+        if (_agent != null && _agent.isActiveAndEnabled)
+        {
+            if (_agent.isOnNavMesh) _agent.isStopped = true;
+            _agent.enabled = false;
+        }
+
+        _originalParent = transform.parent;
+        transform.SetParent(attachPoint, worldPositionStays: false);
+        transform.localPosition = new Vector3(0f, -0.4f, 0.15f); // dangle slightly below the hand
+        transform.localRotation = Quaternion.identity;
+
+        StartCoroutine(CartoonBounceAndFreeze());
+        if (caughtClip != null && audioSource != null)
+            audioSource.PlayOneShot(caughtClip);
+
+        GameManager.Instance?.ReportSuccess();
+    }
+
+    /// <summary>
+    /// Called by ChildGrabber when the player releases the grip.
+    /// Detaches the baby but leaves it where it is — the scenario was already won on Grab.
+    /// </summary>
+    public void Release()
+    {
+        if (!_held) return;
+        _held = false;
+        transform.SetParent(_originalParent, worldPositionStays: true);
+        // Snap-down to floor level so the baby doesn't float in the air.
+        var pos = transform.position;
+        if (Physics.Raycast(pos + Vector3.up * 0.5f, Vector3.down, out RaycastHit hit, 5f, ~0, QueryTriggerInteraction.Ignore))
+            pos.y = hit.point.y;
+        transform.position = pos;
+    }
+
+    public bool IsHeld => _held;
+
+    /// <summary>
+    /// Called by ScenarioManager BEFORE warping the child to a new spawn point.
+    /// Forces detachment from any held parent and re-enables the NavMeshAgent.
+    /// </summary>
+    public void ResetForScenario()
+    {
+        if (_held)
+        {
+            _held = false;
+            transform.SetParent(_originalParent, worldPositionStays: false);
+        }
+        if (_agent != null && !_agent.enabled) _agent.enabled = true;
+    }
+
     /// <summary>How close (0 = far, 1 = touching) the child is to its target.</summary>
     public float GetHazardProximity01(float warningRadius)
     {
@@ -283,7 +350,22 @@ public class ChildNPC : MonoBehaviour
         }
         else
         {
-            // Reset for new scenario
+            // Reset for new scenario. We wait one frame before starting the walk
+            // so that ScenarioManager (running earlier in the frame, but whose
+            // listener registration order is undefined) has had time to update
+            // targetHazard and warp us onto the right NavMesh location.
+
+            // If we were being held (won previous scenario via grab), detach now
+            // so ScenarioManager.Warp can put us back on the NavMesh.
+            if (_held)
+            {
+                _held = false;
+                transform.SetParent(_originalParent, worldPositionStays: false);
+            }
+
+            // Re-enable the agent if Grab() disabled it on the previous round.
+            if (_agent != null && !_agent.enabled) _agent.enabled = true;
+
             _isStopped = false;
             _isMoving = false;
             if (_agent != null && _agent.isOnNavMesh)
@@ -292,9 +374,17 @@ public class ChildNPC : MonoBehaviour
                 _agent.ResetPath();
             }
             if (_walkCoroutine != null) StopCoroutine(_walkCoroutine);
-            if (targetHazard != null)
-                _walkCoroutine = StartCoroutine(BeginWalkAfterDelay());
+            _walkCoroutine = StartCoroutine(WaitOneFrameThenWalk());
         }
+    }
+
+    private IEnumerator WaitOneFrameThenWalk()
+    {
+        // Yield two frames: one for ScenarioManager.ActivateScenario, one for NavMeshAgent.Warp to settle.
+        yield return null;
+        yield return null;
+        if (targetHazard == null) yield break;
+        yield return BeginWalkAfterDelay();
     }
 
 #if UNITY_EDITOR

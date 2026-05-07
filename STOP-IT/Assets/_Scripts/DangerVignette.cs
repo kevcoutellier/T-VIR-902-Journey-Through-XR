@@ -32,6 +32,20 @@ public class DangerVignette : MonoBehaviour
     private void OnEnable()
     {
         if (hazard == null) hazard = FindAnyObjectByType<HazardZone>();
+        if (ScenarioManager.Instance != null)
+            ScenarioManager.Instance.OnScenarioActivated.AddListener(OnScenarioActivated);
+    }
+
+    private void OnDisable()
+    {
+        if (ScenarioManager.Instance != null)
+            ScenarioManager.Instance.OnScenarioActivated.RemoveListener(OnScenarioActivated);
+    }
+
+    private void OnScenarioActivated(ScenarioManager.ScenarioConfig cfg)
+    {
+        if (cfg != null && cfg.hazardZone != null)
+            hazard = cfg.hazardZone;
     }
 
     private void Update()
@@ -76,7 +90,7 @@ public class DangerVignette : MonoBehaviour
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         scaler.referenceResolution = new Vector2(1920, 1080);
 
-        canvasGO.AddComponent<GraphicRaycaster>();
+        // No GraphicRaycaster — this overlay must never intercept input.
 
         var imgGO = new GameObject("Vignette");
         imgGO.transform.SetParent(canvasGO.transform, false);

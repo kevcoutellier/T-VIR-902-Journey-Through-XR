@@ -86,9 +86,15 @@ public static class StopItBuildTools
         ui.feedbackText.text = string.Empty;
         ui.feedbackText.fontStyle = FontStyles.Bold;
 
+        ui.actionHintText = CreateTMPChild(canvasGO, "ActionHintText",
+            new Vector2(0, 50), new Vector2(380, 50), 28, TextAlignmentOptions.Center);
+        ui.actionHintText.text = string.Empty;
+        ui.actionHintText.fontStyle = FontStyles.Italic | FontStyles.Bold;
+        ui.actionHintText.color = new Color(0.2f, 0.95f, 1f);   // cyan
+
         EditorUtility.SetDirty(canvasGO);
         if (!Application.isPlaying) UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
-        Debug.Log("[STOP IT] UI créée : TimerText, ScenarioNameText, FeedbackText, ScoreText.");
+        Debug.Log("[STOP IT] UI créée : TimerText, ScenarioNameText, FeedbackText, ScoreText, ActionHintText.");
     }
 
     private static TextMeshProUGUI CreateTMPChild(GameObject parent, string childName,
@@ -166,21 +172,30 @@ public static class StopItBuildTools
     [MenuItem("Tools/STOP IT/Fix Hand Colliders")]
     public static void FixHandColliders()
     {
-        int count = 0;
+        int colliderCount = 0;
+        int grabberCount  = 0;
         // Find all PlayerBlocker components (attached to the hands)
         foreach (var pb in Object.FindObjectsByType<PlayerBlocker>())
         {
             var go = pb.gameObject;
-            if (go.GetComponent<SphereCollider>() != null) continue;
-
-            var sc = go.AddComponent<SphereCollider>();
-            sc.radius = 0.08f;
-            sc.isTrigger = true;
+            if (go.GetComponent<SphereCollider>() == null)
+            {
+                var sc = go.AddComponent<SphereCollider>();
+                sc.radius = 0.08f;
+                sc.isTrigger = true;
+                Debug.Log("[STOP IT] SphereCollider (trigger) added to " + go.name);
+                colliderCount++;
+            }
+            if (go.GetComponent<ChildGrabber>() == null)
+            {
+                go.AddComponent<ChildGrabber>();
+                Debug.Log("[STOP IT] ChildGrabber added to " + go.name);
+                grabberCount++;
+            }
             EditorUtility.SetDirty(go);
-            Debug.Log("[STOP IT] SphereCollider (trigger) added to " + go.name);
-            count++;
         }
-        if (count == 0) Debug.Log("[STOP IT] Hand colliders already present.");
+        if (colliderCount == 0 && grabberCount == 0)
+            Debug.Log("[STOP IT] Hand colliders + grabbers already present.");
         if (!Application.isPlaying) UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
     }
 
@@ -203,6 +218,7 @@ public static class StopItBuildTools
         configs[0] = new ScenarioManager.ScenarioConfig
         {
             scenarioName = "Salon — La prise électrique",
+            actionHint = "ATTRAPE LE BÉBÉ !",
             childSpawnPoint = FindTransform("SpawnChild_Salon"),
             hazardZone = FindHazard("HazardZone_Outlet"),
             playerSpawnPoint = FindTransform("SpawnPlayer_Salon"),
@@ -213,6 +229,7 @@ public static class StopItBuildTools
         configs[1] = new ScenarioManager.ScenarioConfig
         {
             scenarioName = "Cuisine — Le chat dans le micro-ondes",
+            actionHint = "ATTRAPE LE BÉBÉ AVANT LE CHAT !",
             childSpawnPoint = FindTransform("SpawnChild_Kitchen"),
             hazardZone = FindHazard("HazardZone_Microwave"),
             playerSpawnPoint = FindTransform("SpawnPlayer_Kitchen"),
@@ -223,6 +240,7 @@ public static class StopItBuildTools
         configs[2] = new ScenarioManager.ScenarioConfig
         {
             scenarioName = "Salle de bain — Le produit ménager",
+            actionHint = "BLOQUE-LE !",
             childSpawnPoint = FindTransform("SpawnChild_Bathroom"),
             hazardZone = FindHazard("HazardZone_CleaningProduct"),
             playerSpawnPoint = FindTransform("SpawnPlayer_Bathroom"),
@@ -233,6 +251,7 @@ public static class StopItBuildTools
         configs[3] = new ScenarioManager.ScenarioConfig
         {
             scenarioName = "Escalier — Le skateboard",
+            actionHint = "RATTRAPE-LE !",
             childSpawnPoint = FindTransform("SpawnChild_Stairs"),
             hazardZone = FindHazard("HazardZone_StairsBottom"),
             playerSpawnPoint = FindTransform("SpawnPlayer_Stairs"),
@@ -243,6 +262,7 @@ public static class StopItBuildTools
         configs[4] = new ScenarioManager.ScenarioConfig
         {
             scenarioName = "Chambre — Le rebord de fenêtre",
+            actionHint = "PORTE-LE LOIN DE LA FENÊTRE !",
             childSpawnPoint = FindTransform("SpawnChild_Bedroom"),
             hazardZone = FindHazard("HazardZone_Window"),
             playerSpawnPoint = FindTransform("SpawnPlayer_Bedroom"),
@@ -306,6 +326,26 @@ public static class StopItBuildTools
         EditorUtility.SetDirty(menuGO);
         if (!Application.isPlaying) UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
         Debug.Log("[STOP IT] ScenarioMenu created!");
+    }
+
+    [MenuItem("Tools/STOP IT/Add Desktop Test Rig")]
+    public static void AddDesktopTestRig()
+    {
+        var xrOrigin = Object.FindAnyObjectByType<Unity.XR.CoreUtils.XROrigin>();
+        if (xrOrigin == null) { Debug.LogError("[STOP IT] XROrigin not found — cannot attach DesktopTestRig."); return; }
+
+        if (xrOrigin.GetComponent<DesktopTestRig>() == null)
+        {
+            xrOrigin.gameObject.AddComponent<DesktopTestRig>();
+            EditorUtility.SetDirty(xrOrigin.gameObject);
+            Debug.Log("[STOP IT] DesktopTestRig added to XROrigin. Press Play in editor — WASD/RMB/LMB to test without HMD.");
+        }
+        else
+        {
+            Debug.Log("[STOP IT] DesktopTestRig already present on XROrigin.");
+        }
+
+        if (!Application.isPlaying) UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
     }
 
     [MenuItem("Tools/STOP IT/Fix XR Camera")]

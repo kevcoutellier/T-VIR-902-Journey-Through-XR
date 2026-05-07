@@ -13,18 +13,22 @@ The player wears a Meta Quest 3 headset and embodies an adult in a household env
 
 ## Project Status
 
-**Current milestone: Playable POC — Living Room scenario (scenario #1).**
+**Current milestone: 5-scenario house playable end-to-end + in-engine desktop test mode + Quest 3 build pipeline.**
 
 | Area | Status |
 |---|---|
-| Living Room scene built (walls, sofa, TV stand, coffee table, outlet) | ✅ Done |
-| XR Origin + OpenXR + Mock HMD (editor testing without headset) | ✅ Done |
-| NavMesh baked on Floor, ChildNPC navigates to hazard | ✅ Done |
-| Core gameplay scripts (GameManager, ChildNPC, HazardZone, UI) | ✅ Done |
-| World-space HUD (timer, score, scenario name, feedback) | ✅ Done |
-| Player hand blocking (PlayerBlocker trigger) | ✅ Scripts done, hand wiring pending |
-| Scenarios 2–5 (kitchen, stairs, bathroom, window) | 🔜 Next |
-| Audio (child laugh, hazard SFX, ambient) | 🔜 Next |
+| 2-floor house built (Living Room, Kitchen, Bathroom, Stairs, Bedroom) | ✅ Done |
+| All 5 scenarios wired (outlet / microwave / cleaning product / stairs / window) | ✅ Done |
+| XR Origin + OpenXR + Oculus + Joystick locomotion + wall collisions | ✅ Done |
+| NavMesh baked, ChildNPC re-targets dynamically + cartoon walk anim | ✅ Done |
+| Core scripts (GameManager / ScenarioManager / ChildNPC / HazardZone / UI) | ✅ Done |
+| World-space HUD (timer pulse, feedback bounce) + Floating VR menu (Y button) | ✅ Done |
+| UX layer (HazardIndicator, DangerVignette, IntroCountdown, CameraShake) | ✅ Done |
+| Player hand interception + haptics + auto SphereCollider | ✅ Done |
+| **Desktop test mode (WASD/RMB/LMB) — no headset required** | ✅ Done |
+| **One-click Quest 3 build pipeline (Tools → STOP IT)** | ✅ Done |
+| User testing + feedback iteration | 🔜 Next milestone |
+| Audio polish (child laugh, hazard SFX, ambient) | 🔜 Next |
 | RandomCorp™ mesh swap (final art pass) | ⏳ Blocked on asset drop |
 
 ---
@@ -115,57 +119,90 @@ https://github.com/CoderGamester/mcp-unity.git
 
 ---
 
-## Running the POC (Living Room scenario)
+## Running the project
 
-### Option A — Editor play mode (no headset needed)
+### Option A — Desktop test mode (no headset needed) — recommended for iteration
 
-1. Open the scene `Assets/_Scenes/LivingRoom.unity`
-2. Run **Tools → STOP IT → Bake NavMesh** (if the floor NavMesh is missing)
-3. Run **Tools → STOP IT → Fix XR Camera** (ensures the XR Origin camera is wired correctly — see [XR Camera fix](#xr-camera-fix-note) below)
-4. Run **Tools → STOP IT → Setup UI** (creates the TMP timer/score/feedback texts in the HUD)
-5. Run **Tools → STOP IT → Setup Scene** (auto-wires `targetHazard`, `hazardRenderer`, `audioSource`)
-6. Press **Play**
+The fastest way to iterate on gameplay. Boots in seconds with keyboard + mouse.
+
+1. Open `Assets/_Scenes/LivingRoom.unity`
+2. (one-time) Run **Tools → STOP IT → Bake NavMesh**
+3. (one-time) Run **Tools → STOP IT → Add Desktop Test Rig** — adds `DesktopTestRig` to the XR Origin
+4. Press **Play**
+
+**Controls:**
+| Input | Action |
+|---|---|
+| `W A S D` / arrows | Walk |
+| `Shift` (held) | Sprint |
+| Right mouse button + move | Look around |
+| Left click | Brief block hand — reflex slap to stop the child |
+| `E` (held) | Persistent grab hand — pick up the baby (one-shot save) |
+| `R` | Restart current scenario |
+| `M` or `Tab` | Toggle scenario menu |
+| `Esc` | Release mouse cursor |
+
+`DesktopTestRig` automatically disables itself when an HMD runtime is detected, so it can stay in the scene for headset builds. The XR locomotion binder also gets disabled in this mode.
+
+### Option B — Editor play mode with Mock HMD / Quest Link
+
+1. Steps 1–2 above
+2. Either: connect a Quest via Quest Link **or** enable Unity Mock HMD in **Edit → Project Settings → XR Plug-in Management → PC**
+3. Press **Play**
 
 **Expected behavior:**
-- HUD appears (scenario name, timer = 30, score = 0/3)
-- After a 2-second delay, the Child NPC (blue capsule) walks toward the yellow outlet
-- The outlet pulses red when the child is within 1.5 m
-- If the child reaches the outlet → fail (flash + fail reported to GameManager)
-- If the player intercepts (via `PlayerBlocker` trigger on the hands) → success
+- HUD appears (scenario name, timer, score). Press **Y** (left controller) or **M** (desktop) to toggle the floating menu.
+- A 3-2-1-GO countdown plays, then the Child walks toward the hazard.
+- The hazard pulses red and emits sparks as the child gets closer; a danger vignette tints the screen.
+- Block the child with your hand (or click in desktop mode) → success. Otherwise the child reaches the hazard → fail with camera shake + zap VFX.
 
-### Option B — Meta Quest 3 build
+### Option C — Build & deploy to Meta Quest 3
 
-1. Complete steps 1–5 above
-2. Connect Quest via USB, enable developer mode
-3. **File → Build Settings → Build and Run**
+One-click pipeline:
+
+1. Run **Tools → STOP IT → Configure Android Settings** once per machine (sets ARM64 / IL2CPP / Vulkan, package id, SDK levels)
+2. Connect the Quest via USB, enable developer mode + USB debugging, and accept the host computer prompt inside the headset
+3. Run **Tools → STOP IT → Build & Run on Quest** — produces `Builds/Quest/STOP_IT_XR-<timestamp>.apk` and auto-deploys via adb
+
+For a build only (no deploy), use **Tools → STOP IT → Build Quest 3 (.apk)**. Open the resulting folder via **Tools → STOP IT → Open Builds Folder**.
 
 ---
 
 ## Project Structure
 
 ```
-STOP-IT/                              ← Unity project root
+STOP-IT/                                       ← Unity project root
 ├── Assets/
 │   ├── _Scenes/
-│   │   └── LivingRoom.unity         ← Scenario #1 scene
+│   │   └── LivingRoom.unity                  ← Single scene with all 5 scenarios
 │   ├── _Scripts/
-│   │   ├── GameManager.cs           ← State machine, timer, score, events
-│   │   ├── ChildNPC.cs              ← NavMeshAgent-driven child behaviour
-│   │   ├── HazardZone.cs            ← Hazard detection, pulse, fail trigger
-│   │   ├── ScenarioUI.cs            ← World-space HUD bindings
-│   │   ├── ScenarioSpawner.cs       ← Sequential scenario lifecycle
-│   │   ├── PlayerBlocker.cs         ← Hand trigger that blocks the NPC
-│   │   ├── XRCameraFix.cs           ← Runtime XROrigin.Camera wiring
+│   │   ├── GameManager.cs                    ← State machine, timer, score, events
+│   │   ├── ScenarioManager.cs                ← Scenario sequencing + OnScenarioActivated event
+│   │   ├── ChildNPC.cs                       ← NavMeshAgent + cartoon walk + dynamic re-target
+│   │   ├── HazardZone.cs                     ← Pulse / sparks / hum / fail VFX
+│   │   ├── HazardIndicator.cs                ← Floating arrow above the active hazard
+│   │   ├── DangerVignette.cs                 ← Fullscreen red overlay tied to proximity
+│   │   ├── CameraShake.cs                    ← Static helper for screen-shake on fail
+│   │   ├── ScenarioIntroCountdown.cs         ← 3-2-1-GO before each scenario
+│   │   ├── ScenarioUI.cs                     ← World-space HUD bindings
+│   │   ├── ScenarioMenu.cs                   ← Floating VR menu (Y button)
+│   │   ├── ScenarioSpawner.cs                ← Single-scene fallback spawner
+│   │   ├── PlayerBlocker.cs                  ← Hand trigger that intercepts the child (reflex slap)
+│   │   ├── ChildGrabber.cs                   ← Hand grab that picks the baby up (deliberate save)
+│   │   ├── XRLocomotionBinder.cs             ← Joystick movement + wall collision + menu toggle + grip→grab
+│   │   ├── XRCameraFix.cs                    ← Runtime XROrigin.Camera wiring
+│   │   ├── DesktopTestRig.cs                 ← Keyboard/mouse mode for editor iteration
 │   │   └── Editor/
-│   │       └── StopItBuildTools.cs  ← Tools > STOP IT menu (6 utilities)
-│   ├── _Materials/
-│   │   ├── Mat_Floor, Mat_Wall, Mat_Furniture
-│   │   ├── Mat_Child (blue), Mat_Hazard (yellow)
-│   └── Samples/
-│       └── XR Interaction Toolkit/3.4.0/Starter Assets/
+│   │       ├── HouseBuilder.cs               ← Generates the 5-room house procedurally
+│   │       ├── StopItBuildTools.cs           ← Tools > STOP IT menu (scene wiring)
+│   │       └── QuestBuildTools.cs            ← Tools > STOP IT menu (Quest 3 build pipeline)
+│   ├── _Materials/                           ← Floor / Wall / Furniture / Child / Hazard
+│   └── Samples/                              ← XRI 3.4.0 Starter Assets
+├── Builds/
+│   └── Quest/                                ← Generated APKs land here (gitignored)
 ├── Packages/
 │   ├── manifest.json
-│   └── com.gamelovers.mcp-unity/    ← MCP Unity package
+│   └── com.gamelovers.mcp-unity/             ← MCP Unity package
 └── ProjectSettings/
 ```
 
@@ -177,11 +214,20 @@ The project ships with a **Tools → STOP IT** menu that automates common scene 
 
 | Menu item | What it does |
 |---|---|
-| **Bake NavMesh** | Rebuilds the `NavMeshSurface` on the Floor |
+| **Build House** | Creates the full 2-floor house (5 rooms, staircase, hazards, spawn points, light) |
+| **Bake NavMesh** | Rebuilds the `NavMeshSurface` on the floors |
 | **Setup Scene** | Wires `ChildNPC.targetHazard`, `HazardZone.hazardRenderer`, `GameManager.audioSource` |
 | **Setup UI** | Creates TMP elements in `ScenarioCanvas` (timer, score, feedback, scenario name) |
+| **Setup UX (Indicator + Vignette + Countdown + Shake)** | Adds the full UX layer in one click |
 | **Fix XR Camera** | Assigns the camera to `XROrigin.m_Camera`, adds `TrackedPoseDriver` + `AudioListener` |
 | **Fix Hand Colliders** | Adds trigger `SphereCollider` (r=0.08) to each `PlayerBlocker` hand |
+| **Wire Scenarios** | Auto-fills the `ScenarioManager.scenarios` array from the `HazardZone_*` and `SpawnPlayer_*` / `SpawnChild_*` GameObjects |
+| **Create Menu** | Spawns the floating world-space `ScenarioMenu` (toggled with the Y button) |
+| **Add Desktop Test Rig** | Attaches `DesktopTestRig` to the XR Origin for keyboard/mouse testing |
+| **Configure Android Settings** | Switches PlayerSettings to Quest-friendly values (ARM64 / IL2CPP / Vulkan) |
+| **Build Quest 3 (.apk)** | Builds an APK into `Builds/Quest/` (timestamped filename) |
+| **Build & Run on Quest** | Builds + deploys + launches via `adb` (Quest must be USB-connected) |
+| **Open Builds Folder** | Opens the `Builds/Quest/` folder in the OS file explorer |
 
 All tools save the scene automatically when run outside Play mode.
 
@@ -235,15 +281,26 @@ mcp-unity: node ... - ✓ Connected
 
 ---
 
-## Scenarios (Planned)
+## Scenarios
 
 | # | Location | Child's Action | Player Response | Status |
 |---|---|---|---|---|
-| 1 | Living Room | Sticks fork in electrical outlet | Block the child / cover the outlet | ✅ POC done |
-| 2 | Kitchen | Puts cat in microwave | Intercept before door closes | 🔜 |
-| 3 | Stairs | Launches on skateboard down the stairs | Block the descent | 🔜 |
-| 4 | Bathroom | Drinks cleaning product | Swap the bottle | 🔜 |
-| 5 | Window | Climbs ledge to catch a pigeon | Pull child back | 🔜 |
+| 1 | Living Room | Sticks fork in electrical outlet | Block the child / cover the outlet | ✅ Wired |
+| 2 | Kitchen | Puts cat in microwave | Intercept before door closes | ✅ Wired |
+| 3 | Bathroom | Drinks cleaning product | Swap the bottle | ✅ Wired |
+| 4 | Stairs | Launches on skateboard down the stairs | Block the descent | ✅ Wired |
+| 5 | Bedroom (1F) | Climbs window ledge to catch a pigeon | Pull child back | ✅ Wired |
+
+All scenarios share the same loop (timer + intercept + win/fail VFX). Use the floating VR menu (Y button on left controller, or `M` on desktop) to launch any scenario individually, or `>>> JOUER TOUT <<<` to run them all in sequence.
+
+### Two ways to stop the baby
+
+The player has **two complementary verbs** to win a scenario:
+
+- **Block** (reflex slap) — touch the baby with any hand collider. Fast, panicky.
+- **Grab** (deliberate save) — press the grip button on either controller (or hold `E` on desktop) when close to the baby. The baby is picked up and the scenario is won immediately.
+
+Each scenario opens with a short verb hint ("ATTRAPE LE BÉBÉ !" / "BLOQUE-LE !" / "PORTE-LE LOIN DE LA FENÊTRE !") to guide first-time players. The hint fades after ~2 seconds; both verbs always work regardless of which one was hinted.
 
 ---
 
@@ -261,6 +318,18 @@ Environment → Grey Plane + Coloured Cubes (walls, furniture)
 Assets from the RandomCorp™ Media drop (last week of project) will replace placeholders with a mesh swap — no logic changes required.
 
 ---
+
+## User Testing Protocol
+
+For each test session:
+
+1. **Brief (30s)** — "You're an adult at home. A toddler is about to do something dangerous. Block them with your hands."
+2. **Hands-off run** — let the tester open the menu (Y button) and pick a scenario. Don't help.
+3. **Capture** — write down everything they say out loud, including silence. Note what they look at first, where they hesitate, and what makes them laugh / wince.
+4. **Repeat** — run all 5 scenarios in order on the same person. Watch for fatigue or motion sickness.
+5. **Debrief (1–2 min)** — three open questions: *What did you understand the goal was?* / *What surprised you?* / *What did you want to do that the game didn't let you do?*
+
+Collect raw notes per session. After 3+ testers, look for patterns — that's the signal worth fixing for the next iteration.
 
 ## Promotional Video
 

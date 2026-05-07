@@ -40,16 +40,27 @@ public class ScenarioIntroCountdown : MonoBehaviour
             GameManager.Instance.OnStateChanged.RemoveListener(OnStateChanged);
     }
 
+    private Coroutine _countdownCoroutine;
+
     private void Start()
     {
         if (child == null) child = FindAnyObjectByType<ChildNPC>();
-        StartCoroutine(PlayCountdown());
+        // Don't auto-play on Start — only react to GameManager state transitions
+        // so the countdown fires once per scenario, not twice.
+        if (countdownText != null)
+        {
+            countdownText.text = string.Empty;
+            countdownText.gameObject.SetActive(false);
+        }
     }
 
     private void OnStateChanged(GameManager.GameState state)
     {
         if (state == GameManager.GameState.Playing && gameObject.activeInHierarchy)
-            StartCoroutine(PlayCountdown());
+        {
+            if (_countdownCoroutine != null) StopCoroutine(_countdownCoroutine);
+            _countdownCoroutine = StartCoroutine(PlayCountdown());
+        }
     }
 
     private IEnumerator PlayCountdown()
@@ -75,6 +86,7 @@ public class ScenarioIntroCountdown : MonoBehaviour
         countdownText.gameObject.SetActive(false);
 
         if (child != null) child.startDelay = prevDelay;
+        _countdownCoroutine = null;
     }
 
     private IEnumerator AnimateStep(string label, float duration, bool isGo)
