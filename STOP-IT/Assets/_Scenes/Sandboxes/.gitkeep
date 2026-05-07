@@ -1,0 +1,11 @@
+# Ce dossier contient les scènes de développement isolées (1 par scénario).
+# Créer les scènes depuis Unity Editor et les sauvegarder ici.
+#
+# Convention de nommage :
+#   Sandbox_Outlet.unity      ← Scénario 1 : prise électrique (Salon)
+#   Sandbox_Microwave.unity   ← Scénario 2 : micro-ondes (Cuisine)
+#   Sandbox_Stairs.unity      ← Scénario 3 : escalier/skateboard
+#   Sandbox_Bathroom.unity    ← Scénario 4 : produit nettoyant (SdB)
+#   Sandbox_Window.unity      ← Scénario 5 : fenêtre/pigeon
+#
+# Voir docs/TEAM_WORKFLOW.md pour le workflow complet.

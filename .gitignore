@@ -1,2 +1,19 @@
 pdf_content.txt
 .claude/settings.local.json
+
+# Unity generated
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+*.csproj
+*.sln
+*.tmp
+*.user
+.vs/
+
+# Recovery scenes (sauvegardes transientes, pas source de vérité)
+STOP-IT/Assets/_Recovery/

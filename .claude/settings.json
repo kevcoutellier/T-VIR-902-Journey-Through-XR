@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|mcp__mcp-unity__add_asset_to_scene|mcp__mcp-unity__create_scene|mcp__mcp-unity__save_scene|mcp__mcp-unity__delete_gameobject|mcp__mcp-unity__update_gameobject|mcp__mcp-unity__move_gameobject|mcp__mcp-unity__rotate_gameobject|mcp__mcp-unity__scale_gameobject|mcp__mcp-unity__reparent_gameobject|mcp__mcp-unity__duplicate_gameobject|mcp__mcp-unity__set_transform|mcp__mcp-unity__assign_material|mcp__mcp-unity__update_component",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -File .claude/hooks/check-scene-lock.ps1"
+          }
+        ]
+      }
+    ]
+  }
+}
