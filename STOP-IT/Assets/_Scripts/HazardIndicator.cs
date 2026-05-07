@@ -40,6 +40,24 @@ public class HazardIndicator : MonoBehaviour
     {
         if (hazard == null) hazard = GetComponent<HazardZone>();
         if (hazard == null) hazard = FindAnyObjectByType<HazardZone>();
+        if (Application.isPlaying && ScenarioManager.Instance != null)
+            ScenarioManager.Instance.OnScenarioActivated.AddListener(OnScenarioActivated);
+    }
+
+    private void OnDisable()
+    {
+        if (Application.isPlaying && ScenarioManager.Instance != null)
+            ScenarioManager.Instance.OnScenarioActivated.RemoveListener(OnScenarioActivated);
+    }
+
+    private void OnScenarioActivated(ScenarioManager.ScenarioConfig cfg)
+    {
+        if (cfg != null && cfg.hazardZone != null)
+        {
+            hazard = cfg.hazardZone;
+            // Re-acquire child reference so the new hazard's proximity reads correctly.
+            _child = null;
+        }
     }
 
     private void Update()

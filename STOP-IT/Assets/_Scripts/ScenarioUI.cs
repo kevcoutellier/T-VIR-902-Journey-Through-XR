@@ -18,6 +18,14 @@ public class ScenarioUI : MonoBehaviour
     public TextMeshProUGUI scenarioNameText;
     public TextMeshProUGUI feedbackText;
     public TextMeshProUGUI scoreText;
+    public TextMeshProUGUI actionHintText;
+
+    [Header("Action Hint")]
+    [Tooltip("How long the action hint stays at full opacity before fading out (s)")]
+    public float hintHoldDuration = 2f;
+    [Tooltip("How long the action hint takes to fade out (s)")]
+    public float hintFadeDuration = 0.6f;
+    public Color hintColor = new Color(0.2f, 0.95f, 1f);
 
     [Header("Settings")]
     public string scenarioName = "Salon — La prise électrique";
@@ -36,12 +44,19 @@ public class ScenarioUI : MonoBehaviour
 
     private Vector3 _timerBaseScale = Vector3.one;
     private Coroutine _feedbackBounce;
+    private Coroutine _hintRoutine;
 
     // ── Unity ──────────────────────────────────────────────────────────────
     private void Start()
     {
         if (scenarioNameText) scenarioNameText.text = scenarioName;
         if (feedbackText) feedbackText.text = string.Empty;
+        if (actionHintText)
+        {
+            var c = hintColor; c.a = 0f;
+            actionHintText.color = c;
+            actionHintText.text = string.Empty;
+        }
         if (timerText)
         {
             timerText.color = normalTimerColor;
@@ -105,6 +120,15 @@ public class ScenarioUI : MonoBehaviour
         if (scenarioNameText) scenarioNameText.gameObject.SetActive(showHUD);
         if (scoreText) scoreText.gameObject.SetActive(showHUD);
         if (feedbackText) feedbackText.gameObject.SetActive(showHUD);
+        if (actionHintText) actionHintText.gameObject.SetActive(showHUD);
+
+        // Stop any running hint fade as soon as the round resolves —
+        // we don't want the cyan verb lingering on top of the success/fail message.
+        if (state == GameManager.GameState.Success || state == GameManager.GameState.Fail
+            || state == GameManager.GameState.GameOver || state == GameManager.GameState.Menu)
+        {
+            HideActionHint();
+        }
 
         if (feedbackText == null) return;
         switch (state)
@@ -172,5 +196,58 @@ public class ScenarioUI : MonoBehaviour
     {
         scenarioName = name;
         if (scenarioNameText) scenarioNameText.text = name;
+    }
+
+    /// <summary>
+    /// Called by ScenarioManager at scenario start. Shows a short verb
+    /// ("ATTRAPE LE BÉBÉ !") at full opacity, holds for hintHoldDuration,
+    /// then fades over hintFadeDuration.
+    /// </summary>
+    public void SetActionHint(string hint)
+    {
+        if (actionHintText == null) return;
+        if (string.IsNullOrEmpty(hint)) { HideActionHint(); return; }
+
+        if (_hintRoutine != null) StopCoroutine(_hintRoutine);
+        _hintRoutine = StartCoroutine(ActionHintRoutine(hint));
+    }
+
+    public void HideActionHint()
+    {
+        if (actionHintText == null) return;
+        if (_hintRoutine != null) { StopCoroutine(_hintRoutine); _hintRoutine = null; }
+        var c = hintColor; c.a = 0f;
+        actionHintText.color = c;
+        actionHintText.text = string.Empty;
+    }
+
+    private IEnumerator ActionHintRoutine(string hint)
+    {
+        actionHintText.text = hint;
+        var c = hintColor; c.a = 1f;
+        actionHintText.color = c;
+
+        // Hold
+        float t = 0f;
+        while (t < hintHoldDuration && GameManager.Instance != null
+               && GameManager.Instance.State == GameManager.GameState.Playing)
+        {
+            t += Time.deltaTime;
+            yield return null;
+        }
+
+        // Fade
+        t = 0f;
+        while (t < hintFadeDuration)
+        {
+            t += Time.deltaTime;
+            float a = Mathf.Clamp01(1f - t / hintFadeDuration);
+            var col = hintColor; col.a = a;
+            actionHintText.color = col;
+            yield return null;
+        }
+
+        actionHintText.text = string.Empty;
+        _hintRoutine = null;
     }
 }
