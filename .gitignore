@@ -13,6 +13,7 @@ pdf_content.txt
 *.sln
 *.tmp
 *.user
+*.lscache
 .vs/
 
 # Recovery scenes (sauvegardes transientes, pas source de vérité)

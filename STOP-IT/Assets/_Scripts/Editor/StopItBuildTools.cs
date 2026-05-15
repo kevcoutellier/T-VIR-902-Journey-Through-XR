@@ -390,6 +390,20 @@ public static class StopItBuildTools
         return go != null ? new GameObject[] { go } : new GameObject[0];
     }
 
+    [MenuItem("Tools/STOP IT/Spawn Floor Obstacles")]
+    public static void SpawnFloorObstacles()
+    {
+        var existing = GameObject.Find("FloorObstacles");
+        if (existing != null) Undo.DestroyObjectImmediate(existing);
+
+        FloorObstacleAutoSetup.SpawnIntoScene();
+
+        if (!Application.isPlaying)
+            UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
+
+        Debug.Log("[STOP IT] 15 dalles violettes spawned. Ctrl+Z pour annuler.");
+    }
+
     [MenuItem("Tools/STOP IT/Create Menu")]
     public static void CreateMenu()
     {

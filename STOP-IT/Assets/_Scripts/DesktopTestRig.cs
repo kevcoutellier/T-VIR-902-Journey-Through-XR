@@ -194,7 +194,8 @@ public class DesktopTestRig : MonoBehaviour
         if (input.sqrMagnitude < 0.01f) return;
         input = Vector2.ClampMagnitude(input, 1f);
 
-        float speed = moveSpeed * (kb.leftShiftKey.isPressed ? sprintMultiplier : 1f);
+        float speed = moveSpeed * (kb.leftShiftKey.isPressed ? sprintMultiplier : 1f)
+                    * FloorObstacle.GetSpeedMultiplierAt(_xrOrigin.transform.position);
 
         Vector3 fwd = _camera.transform.forward; fwd.y = 0f; fwd.Normalize();
         Vector3 right = _camera.transform.right; right.y = 0f; right.Normalize();

@@ -236,7 +236,8 @@ public class XRLocomotionBinder : MonoBehaviour
         forward.y = 0f; forward.Normalize();
         right.y   = 0f; right.Normalize();
 
-        Vector3 move = (forward * stick.y + right * stick.x) * moveSpeed * Time.deltaTime;
+        float effectiveSpeed = moveSpeed * FloorObstacle.GetSpeedMultiplierAt(_xrOrigin.transform.position);
+        Vector3 move = (forward * stick.y + right * stick.x) * effectiveSpeed * Time.deltaTime;
         if (move.sqrMagnitude < 1e-6f) return;
 
         if (wallCollisionEnabled)
