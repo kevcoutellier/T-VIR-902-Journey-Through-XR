@@ -10,13 +10,18 @@ using UnityEngine.XR.Interaction.Toolkit;
 /// Block (touch) and Grab are two valid verbs for the same outcome:
 ///   • Block = reflex slap → handled by PlayerBlocker
 ///   • Grab  = deliberate save → handled here
+///
+/// Bathroom scenario extension: the same trigger picks up a WaterBottle, and a
+/// second press near the cleaning-product hazard performs the swap (success).
+/// The same input path works for VR (grip) and desktop (E key) — both call
+/// Trigger() through their respective rig.
 /// </summary>
 [RequireComponent(typeof(Transform))]
 public class ChildGrabber : MonoBehaviour
 {
     [Header("Detection")]
-    [Tooltip("Sphere radius around the hand used to detect the baby")]
-    public float grabRadius = 0.18f;
+    [Tooltip("Sphere radius around the hand used to detect the baby / bottle / hazard zone")]
+    public float grabRadius = 0.30f;
 
     [Tooltip("Tag used on the ChildNPC GameObject")]
     public string childTag = "Child";
@@ -32,7 +37,7 @@ public class ChildGrabber : MonoBehaviour
 #pragma warning disable CS0618
     private XRBaseController _controller;
 #pragma warning restore CS0618
-    private static readonly Collider[] _overlapBuffer = new Collider[8];
+    private static readonly Collider[] _overlapBuffer = new Collider[16];
 
     private void Awake()
     {
@@ -43,12 +48,54 @@ public class ChildGrabber : MonoBehaviour
 
     /// <summary>
     /// Called by XRLocomotionBinder (grip press) or DesktopTestRig (E key).
-    /// Picks up the nearest ChildNPC inside the grab radius.
+    /// Priority:
+    ///   1. If a WaterBottle is held → try to drop it on its hazard zone (camera distance).
+    ///   2. Else if a WaterBottle is near the player camera → pick it up.
+    ///   3. Else pick up the nearest ChildNPC via hand overlap-sphere (one-shot win).
+    ///
+    /// WaterBottle paths use the CAMERA position (not the hand) because the desktop
+    /// rig spawns a temporary "hand" GameObject 1.6m in front of the camera, which
+    /// would never sit close enough to a 0.9m-high bottle for an overlap-sphere hit.
     /// </summary>
     public void Trigger()
     {
         if (_heldChild != null) return;
 
+        // --- WaterBottle paths: use camera distance (rig-agnostic) ---
+        var cam = Camera.main;
+        if (cam != null)
+        {
+            Vector3 camPos = cam.transform.position;
+            var bottles = Object.FindObjectsByType<WaterBottle>(FindObjectsInactive.Exclude);
+
+            // 1. Held bottle → try drop on hazard.
+            foreach (var wb in bottles)
+            {
+                if (!wb.IsHeld || wb.targetHazardZone == null) continue;
+                float d = Vector3.Distance(camPos, wb.targetHazardZone.transform.position);
+                if (d <= wb.interactionRadius && wb.TryDropAt(wb.targetHazardZone))
+                {
+                    if (_controller != null)
+                        _controller.SendHapticImpulse(hapticAmplitude, hapticDuration);
+                    return;
+                }
+            }
+
+            // 2. Not held + player close → pickup.
+            foreach (var wb in bottles)
+            {
+                if (wb.IsHeld) continue;
+                float d = Vector3.Distance(camPos, wb.transform.position);
+                if (d <= wb.interactionRadius && wb.TryPickup(transform))
+                {
+                    if (_controller != null)
+                        _controller.SendHapticImpulse(hapticAmplitude, hapticDuration);
+                    return;
+                }
+            }
+        }
+
+        // --- ChildNPC path: hand overlap-sphere (unchanged) ---
         int hitCount = Physics.OverlapSphereNonAlloc(transform.position, grabRadius, _overlapBuffer,
             ~0, QueryTriggerInteraction.Collide);
 

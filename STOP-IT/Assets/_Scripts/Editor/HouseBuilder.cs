@@ -270,7 +270,7 @@ public static class HouseBuilder
         var r = Room(p, "Room_Bathroom");
         // Cabinet/sink against south wall
         Obj(r, "Cabinet", PrimitiveType.Cube, new Vector3(-4, 0.4f, -5.3f), new Vector3(1.5f, 0.8f, 0.5f), "Mat_Furniture");
-        // Cleaning product bottle on cabinet
+        // Cleaning product bottle on cabinet (hazard side — what the NPC walks toward)
         Obj(r, "CleaningBottle", PrimitiveType.Cylinder, new Vector3(-4, 0.9f, -5.3f), new Vector3(0.08f, 0.12f, 0.08f), "Mat_Hazard");
         // Bathtub along west wall
         Obj(r, "Bathtub", PrimitiveType.Cube, new Vector3(-6, 0.3f, -3.5f), new Vector3(1f, 0.6f, 1.8f), "Mat_Furniture");
@@ -278,6 +278,51 @@ public static class HouseBuilder
         Obj(r, "Toilet", PrimitiveType.Cube, new Vector3(-2, 0.25f, -5.3f), new Vector3(0.4f, 0.5f, 0.4f), "Mat_Furniture");
         // Hazard
         HZ(r, "HazardZone_CleaningProduct", new Vector3(-4, 0.9f, -5.3f), new Vector3(0.4f, 0.4f, 0.4f), "Produit menager");
+
+        // Water bottle on the back cabinet, just beside the cleaning product, so the
+        // player picks it up and swaps it side-by-side with the hazard.
+        BuildWaterBottle(r, new Vector3(-3.5f, 0.9f, -5.3f));
+    }
+
+    /// <summary>
+    /// Creates the bathroom water-bottle pickup with a simple "grab me" chevron
+    /// floating above it. The chevron is hidden once the bottle is picked up.
+    /// </summary>
+    static void BuildWaterBottle(GameObject parent, Vector3 pos)
+    {
+        var bottle = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        bottle.name = "WaterBottle";
+        bottle.transform.SetParent(parent.transform, false);
+        bottle.transform.position = pos;
+        bottle.transform.localScale = new Vector3(0.08f, 0.12f, 0.08f);
+        Mat(bottle, "Mat_Water");
+        if (bottle.GetComponent<Renderer>()?.sharedMaterial == null)
+            Mat(bottle, "Mat_Wall");
+        // Bottle collider stays as a trigger so the hand's overlap-sphere detects it
+        // without physically blocking the player.
+        var col = bottle.GetComponent<Collider>();
+        if (col != null) col.isTrigger = true;
+        var rb = bottle.AddComponent<Rigidbody>();
+        rb.isKinematic = true;
+        rb.useGravity = false;
+
+        var wb = bottle.AddComponent<WaterBottle>();
+
+        // Floating chevron 0.3m above the bottle, bright cyan so it reads as "grab me".
+        var indicatorGO = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        indicatorGO.name = "PickupIndicator";
+        indicatorGO.transform.SetParent(bottle.transform, false);
+        indicatorGO.transform.localPosition = new Vector3(0f, 2.5f, 0f); // bottle is squished to 0.12 → ≈ 0.3m above
+        indicatorGO.transform.localRotation = Quaternion.Euler(180f, 0f, 0f); // point down
+        indicatorGO.transform.localScale = new Vector3(3f, 1.5f, 3f); // counter-scaled vs parent
+        var indCol = indicatorGO.GetComponent<Collider>();
+        if (indCol != null) Object.DestroyImmediate(indCol);
+        Mat(indicatorGO, "Mat_Water");
+        if (indicatorGO.GetComponent<Renderer>()?.sharedMaterial == null)
+            Mat(indicatorGO, "Mat_Wall");
+        wb.pickupIndicator = indicatorGO;
+
+        Undo.RegisterCreatedObjectUndo(bottle, "WaterBottle");
     }
 
     // ─── ROOM 5: CHAMBRE (first floor, right side) ────────────────────
@@ -290,8 +335,9 @@ public static class HouseBuilder
         Obj(r, "Wardrobe", PrimitiveType.Cube, new Vector3(1, H + 1f, 5), new Vector3(1.5f, 2f, 0.6f), "Mat_Furniture");
         // Desk near window
         Obj(r, "Desk", PrimitiveType.Cube, new Vector3(6, H + 0.4f, 0), new Vector3(0.8f, 0.8f, 1.2f), "Mat_Furniture");
-        // Pigeon outside the window
-        Obj(r, "Pigeon", PrimitiveType.Sphere, new Vector3(7.3f, 4.3f, 0), new Vector3(0.2f, 0.2f, 0.2f), "Mat_Wall");
+        // Pigeon perched on/near the window ledge — flies off when the toddler approaches.
+        var pigeon = Obj(r, "Pigeon", PrimitiveType.Sphere, new Vector3(6.6f, 4.3f, 0), new Vector3(0.18f, 0.18f, 0.18f), "Mat_Wall");
+        pigeon.AddComponent<PigeonEscape>();
         // Hazard: window ledge
         HZ(r, "HazardZone_Window", new Vector3(6.85f, 4.1f, 0), new Vector3(0.4f, 0.3f, 2f), "Rebord de fenetre");
     }
@@ -330,42 +376,54 @@ public static class HouseBuilder
     static void Spawns(GameObject p)
     {
         foreach (var sp in SpawnDefinitions())
-            SP(p, sp.name, sp.pos);
+            SP(p, sp.name, sp.pos, sp.yaw);
     }
 
     /// <summary>
-    /// Authoritative list of spawn-point names + positions. Shared with
-    /// StopItBuildTools.RepositionSpawns so we never drift between code paths.
+    /// Authoritative list of spawn-point names + positions + yaw (degrees).
+    /// Shared with StopItBuildTools.RepositionSpawns so we never drift between
+    /// code paths. Yaw is around the Y axis: 0 = facing +Z (north), 90 = +X (east),
+    /// 180 = -Z (south), 270 = -X (west).
+    ///
+    /// Player spawns are placed BEHIND the NPC so the player has to catch up,
+    /// EXCEPT for the bathroom (sc 3) where the player must reach a water bottle
+    /// and swap it onto the cleaning-product hazard — so they spawn IN FRONT of
+    /// the NPC, near the hazard area, facing back toward the incoming toddler.
+    ///
     /// Hallway doors are at: Salon X∈[-1.5,0]/Z=1, Kitchen X∈[0,1.5]/Z=1,
     /// Bathroom X∈[-1.5,0]/Z=-1, Stairs X∈[0,1.5]/Z=-1.
     /// </summary>
-    public static (string name, Vector3 pos)[] SpawnDefinitions() => new (string, Vector3)[]
+    public static (string name, Vector3 pos, float yaw)[] SpawnDefinitions() => new (string, Vector3, float)[]
     {
         // Salon: child enters via south door, walks west toward outlet at (-6.85, 0.3, 3)
-        ("SpawnChild_Salon",     new Vector3(-0.75f, 0f, 1.5f)),
-        ("SpawnPlayer_Salon",    new Vector3(-3f,    0f, 2.5f)),
+        ("SpawnChild_Salon",     new Vector3(-0.75f, 0f, 1.5f), 270f),
+        // Player just behind NPC (in the hallway south of the salon door), facing north
+        ("SpawnPlayer_Salon",    new Vector3(-0.75f, 0f, 0.3f),   0f),
 
         // Kitchen: child enters via south door, walks NE toward microwave at (2.5, 1.05, 5.5)
-        ("SpawnChild_Kitchen",   new Vector3( 0.75f, 0f, 1.5f)),
-        ("SpawnPlayer_Kitchen",  new Vector3( 2f,    0f, 3f)),
-
-        // Stairs: child starts at TOP landing (skateboard waiting there) and rolls down toward
-        // HazardZone_StairsBottom at (5, 0.2, -5.5). Player blocks at the bottom.
-        ("SpawnChild_Stairs",    new Vector3( 5f,    H,  -1f)),
-        ("SpawnPlayer_Stairs",   new Vector3( 5f,    0f, -3f)),
+        ("SpawnChild_Kitchen",   new Vector3( 0.75f, 0f, 1.5f),  45f),
+        // Player just behind NPC (hallway south of kitchen door), facing NE
+        ("SpawnPlayer_Kitchen",  new Vector3( 0.75f, 0f, 0.3f),  45f),
 
         // Bathroom: child enters via north door, walks south toward cleaning product at (-4, 0.9, -5.3)
-        ("SpawnChild_Bathroom",  new Vector3(-0.75f, 0f, -1.5f)),
-        ("SpawnPlayer_Bathroom", new Vector3(-2f,    0f, -3f)),
+        ("SpawnChild_Bathroom",  new Vector3(-0.75f, 0f, -1.5f),210f),
+        // Player IN FRONT of child, in the bathroom facing the back cabinet where both bottles sit
+        ("SpawnPlayer_Bathroom", new Vector3(-3.5f,  0f, -3.5f),180f),
 
-        // Bedroom (1F): child arrives at top-of-stairs landing, walks east toward window ledge at (6.85, 4.1, 0)
-        ("SpawnChild_Bedroom",   new Vector3( 4f,    H, -0.5f)),
-        ("SpawnPlayer_Bedroom",  new Vector3( 5.5f,  H,  0f)),
+        // Stairs: child starts at TOP landing (skateboard) and rolls down toward
+        // HazardZone_StairsBottom at (5, 0.2, -5.5). Player MUST be upstairs, behind the NPC.
+        ("SpawnChild_Stairs",    new Vector3( 5f,    H,  -1f),  180f),
+        ("SpawnPlayer_Stairs",   new Vector3( 5f,    H,   0.5f),180f),
+
+        // Bedroom (1F): child farther from the window so the player has time to catch up,
+        // window ledge at (6.85, 4.1, 0)
+        ("SpawnChild_Bedroom",   new Vector3( 2.5f,  H, -0.5f),  90f),
+        ("SpawnPlayer_Bedroom",  new Vector3( 0.5f,  H, -0.5f),  90f),
 
         // Pigeon room (1F): child deep in room — walks to window, opens it (~8 s), then leans out.
         // Player spawns at staircase base (ground floor) and must run upstairs in time.
-        ("SpawnChild_PigeonRoom",  new Vector3(0.8f,  H,  -2.5f)),
-        ("SpawnPlayer_PigeonRoom", new Vector3(4.5f,  0f, -2.0f)),
+        ("SpawnChild_PigeonRoom",  new Vector3(0.8f,  H,  -2.5f), 180f),
+        ("SpawnPlayer_PigeonRoom", new Vector3(4.5f,  0f, -2.0f),   0f),
     };
 
     // ─── WindowOpener trigger ──────────────────────────────────────────────
@@ -446,11 +504,12 @@ public static class HouseBuilder
         Undo.RegisterCreatedObjectUndo(o, n);
     }
 
-    static void SP(GameObject p, string n, Vector3 pos)
+    static void SP(GameObject p, string n, Vector3 pos, float yawDeg)
     {
         var g = new GameObject(n);
         g.transform.SetParent(p.transform, false);
         g.transform.position = pos;
+        g.transform.rotation = Quaternion.Euler(0f, yawDeg, 0f);
         Undo.RegisterCreatedObjectUndo(g, n);
     }
 

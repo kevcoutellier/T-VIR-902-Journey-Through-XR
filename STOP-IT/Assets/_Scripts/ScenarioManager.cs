@@ -28,6 +28,20 @@ public class ScenarioManager : MonoBehaviour
                  "Negative = use ChildNPC.startDelay default. " +
                  "Set very high (e.g. 999) when a WindowInteractable triggers the walk.")]
         public float childStartDelayOverride = -1f;
+
+        [Header("Scenario-specific")]
+        [Tooltip("Show the cosmetic skateboard mesh under the NPC (stairs scenario). Deprecated — prefer carriedItem.")]
+        public bool showSkateboard;
+        [Tooltip("Water bottle to reset at scenario start (bathroom scenario).")]
+        public WaterBottle waterBottle;
+        [Tooltip("Pigeon to reset and bind to the active NPC (window scenario).")]
+        public PigeonEscape pigeon;
+        [Tooltip("Object parented to the NPC for the duration of this scenario (fork, cat, skateboard, …). Restored to its original parent when the scenario changes.")]
+        public GameObject carriedItem;
+        [Tooltip("Local position of the carried item relative to the NPC root.")]
+        public Vector3 carriedItemLocalPosition = new Vector3(0f, 0.2f, 0.5f);
+        [Tooltip("Local Euler angles of the carried item relative to the NPC root.")]
+        public Vector3 carriedItemLocalEuler;
     }
 
     [Header("References")]
@@ -191,6 +205,22 @@ public class ScenarioManager : MonoBehaviour
             _xrOrigin.transform.position = config.playerSpawnPoint.position;
             _xrOrigin.transform.rotation = config.playerSpawnPoint.rotation;
         }
+
+        // Scenario-specific visuals & state.
+        if (childNPC != null)
+        {
+            childNPC.SetSkateboardVisible(config.showSkateboard);
+            Debug.Log($"[ScenarioManager] SetCarriedItem → " +
+                      $"{(config.carriedItem ? config.carriedItem.name : "<null>")} " +
+                      $"at local {config.carriedItemLocalPosition}", this);
+            childNPC.SetCarriedItem(config.carriedItem,
+                                    config.carriedItemLocalPosition,
+                                    config.carriedItemLocalEuler);
+        }
+        if (config.waterBottle != null)
+            config.waterBottle.ResetBottle();
+        if (config.pigeon != null)
+            config.pigeon.ResetPigeon(childNPC);
 
         // Update UI
         if (scenarioUI != null)

@@ -49,6 +49,7 @@ public class HazardZone : MonoBehaviour
 
     // ── Runtime ────────────────────────────────────────────────────────────
     private bool _triggered = false;
+    private bool _neutralised = false;
     private ChildNPC _child;
     private static readonly int BaseColorProp = Shader.PropertyToID("_BaseColor");
     private static readonly int EmissionColorProp = Shader.PropertyToID("_EmissionColor");
@@ -137,13 +138,26 @@ public class HazardZone : MonoBehaviour
     }
 
     // ── Public API ─────────────────────────────────────────────────────────
-    /// <summary>Called by ChildNPC when it arrives here — fail.</summary>
+    /// <summary>Called by ChildNPC when it arrives here. Routes to success or fail
+    /// depending on whether the zone has been neutralised (e.g. bathroom swap).</summary>
     public void TriggerHazard()
     {
         if (_triggered) return;
         _triggered = true;
         OnHazardTriggered?.Invoke();
-        StartCoroutine(TriggerSequence());
+        Debug.Log($"[HazardZone] {gameObject.name} TriggerHazard → " +
+                  $"{(_neutralised ? "SUCCESS (neutralised)" : "FAIL")}", this);
+        if (_neutralised) StartCoroutine(NeutralisedSuccessSequence());
+        else              StartCoroutine(TriggerSequence());
+    }
+
+    /// <summary>
+    /// Marks the hazard as resolved (e.g. after a successful bathroom swap).
+    /// TriggerHazard becomes a no-op so the toddler reaching the zone is harmless.
+    /// </summary>
+    public void MarkNeutralised()
+    {
+        _neutralised = true;
     }
 
     /// <summary>Called externally when the scenario is won.</summary>
@@ -153,6 +167,14 @@ public class HazardZone : MonoBehaviour
     }
 
     // ── Private ────────────────────────────────────────────────────────────
+    private IEnumerator NeutralisedSuccessSequence()
+    {
+        // Toddler arrived but the hazard was already swapped — celebrate.
+        if (confetti != null) confetti.Play();
+        yield return new WaitForSeconds(0.5f);
+        GameManager.Instance?.ReportSuccess();
+    }
+
     private IEnumerator TriggerSequence()
     {
         if (zapClip != null)
@@ -195,6 +217,7 @@ public class HazardZone : MonoBehaviour
         {
             case GameManager.GameState.Playing:
                 _triggered = false;
+                _neutralised = false;
                 SetVisualState(normalColor, 0f);
                 if (sparks != null) sparks.Stop();
                 if (humSource != null && humSource.isPlaying) humSource.Stop();

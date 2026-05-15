@@ -55,6 +55,10 @@ public class ChildNPC : MonoBehaviour
     public AudioClip laughClip;
     public AudioClip caughtClip;
 
+    [Header("Scenario Visuals")]
+    [Tooltip("Optional cosmetic skateboard mesh parented under the NPC. Toggled on for the stairs scenario only.")]
+    public GameObject skateboardVisual;
+
     // ── Runtime ────────────────────────────────────────────────────────────
     private NavMeshAgent _agent;
     private bool _isMoving = false;
@@ -87,6 +91,27 @@ public class ChildNPC : MonoBehaviour
         // fight the agent (and the child would appear stuck).
         _meshT = FindOrCreateMeshHolder();
         _meshStartLocalPos = _meshT.localPosition;
+
+        // Auto-create the skateboard placeholder (parented under the NPC, disabled
+        // by default — ScenarioManager toggles it via SetSkateboardVisible).
+        if (skateboardVisual == null) skateboardVisual = CreateSkateboardVisual();
+        if (skateboardVisual != null) skateboardVisual.SetActive(false);
+    }
+
+    private GameObject CreateSkateboardVisual()
+    {
+        var existing = transform.Find("SkateboardMount");
+        if (existing != null) return existing.gameObject;
+
+        var skate = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        skate.name = "SkateboardMount";
+        var col = skate.GetComponent<Collider>();
+        if (col != null) Destroy(col); // cosmetic only, no physics
+        skate.transform.SetParent(transform, false);
+        skate.transform.localPosition = new Vector3(0f, -0.45f, 0f); // just under the toddler's feet
+        skate.transform.localRotation = Quaternion.identity;
+        skate.transform.localScale = new Vector3(0.30f, 0.05f, 0.70f);
+        return skate;
     }
 
     /// <summary>
@@ -256,16 +281,52 @@ public class ChildNPC : MonoBehaviour
             _agent.enabled = false;
         }
 
+        // Disable our colliders so the player's wall/ground sweeps don't catch
+        // the toddler hanging from their hand (which used to push the player
+        // through the floor when grabbed on the stairs).
+        SetCollidersEnabled(false);
+
         _originalParent = transform.parent;
         transform.SetParent(attachPoint, worldPositionStays: false);
         transform.localPosition = new Vector3(0f, -0.4f, 0.15f); // dangle slightly below the hand
         transform.localRotation = Quaternion.identity;
 
-        StartCoroutine(CartoonBounceAndFreeze());
+        // Gentle left-right sway while held (slow, low amplitude). Replaces the
+        // older cartoon bounce, which was a fast vertical bob + Z-axis spin and
+        // read as "vibration" when E was held down.
+        if (_heldSwayCoroutine != null) StopCoroutine(_heldSwayCoroutine);
+        _heldSwayCoroutine = StartCoroutine(HeldSway());
+
         if (caughtClip != null && audioSource != null)
             audioSource.PlayOneShot(caughtClip);
 
         GameManager.Instance?.ReportSuccess();
+    }
+
+    private Coroutine _heldSwayCoroutine;
+
+    private IEnumerator HeldSway()
+    {
+        Vector3 startPos = _meshT.localPosition;
+        Quaternion startRot = _meshT.localRotation;
+        // Slow pendulum: ~3° peak amplitude, ~0.4 Hz (≈2.5s per cycle).
+        const float amplitudeDeg = 3f;
+        const float frequencyHz = 0.4f;
+        while (_held)
+        {
+            float angle = Mathf.Sin(Time.time * Mathf.PI * 2f * frequencyHz) * amplitudeDeg;
+            _meshT.localPosition = startPos;
+            _meshT.localRotation = startRot * Quaternion.Euler(0f, 0f, angle);
+            yield return null;
+        }
+        _meshT.localPosition = startPos;
+        _meshT.localRotation = startRot;
+    }
+
+    private void SetCollidersEnabled(bool on)
+    {
+        foreach (var col in GetComponentsInChildren<Collider>(includeInactive: true))
+            col.enabled = on;
     }
 
     /// <summary>
@@ -277,14 +338,78 @@ public class ChildNPC : MonoBehaviour
         if (!_held) return;
         _held = false;
         transform.SetParent(_originalParent, worldPositionStays: true);
-        // Snap-down to floor level so the baby doesn't float in the air.
-        var pos = transform.position;
-        if (Physics.Raycast(pos + Vector3.up * 0.5f, Vector3.down, out RaycastHit hit, 5f, ~0, QueryTriggerInteraction.Ignore))
-            pos.y = hit.point.y;
-        transform.position = pos;
+        SetCollidersEnabled(true);
+
+        // Re-bind onto the NavMesh: Warp() puts the agent at the correct baseOffset
+        // above the floor and keeps the NPC drivable if released mid-scenario.
+        // The previous raycast snap could hit the NPC's own collider (mask=~0) or
+        // ignore the agent's baseOffset, causing the body to sink into the floor.
+        if (_agent != null)
+        {
+            _agent.enabled = true;
+            if (NavMesh.SamplePosition(transform.position, out NavMeshHit navHit, 3f, NavMesh.AllAreas))
+                _agent.Warp(navHit.position);
+        }
+        else
+        {
+            // Fallback: raycast from well above, excluding the NPC's own colliders.
+            var pos = transform.position;
+            int mask = ~(1 << gameObject.layer);
+            if (Physics.Raycast(pos + Vector3.up * 2f, Vector3.down, out RaycastHit hit, 10f, mask, QueryTriggerInteraction.Ignore))
+                pos.y = hit.point.y;
+            transform.position = pos;
+        }
     }
 
     public bool IsHeld => _held;
+
+    /// <summary>Toggles the cosmetic skateboard mesh (stairs scenario only).</summary>
+    public void SetSkateboardVisible(bool on)
+    {
+        if (skateboardVisual != null) skateboardVisual.SetActive(on);
+    }
+
+    // ── Carried item ───────────────────────────────────────────────────────
+    private GameObject _carriedItem;
+    private Transform _carriedItemOriginalParent;
+    private Vector3 _carriedItemOriginalLocalPos;
+    private Quaternion _carriedItemOriginalLocalRot;
+    private Vector3 _carriedItemOriginalLocalScale;
+    private bool _carriedItemWasActive;
+
+    /// <summary>
+    /// Parents the given GameObject to the NPC at the given local pose, so it
+    /// visually "follows" the toddler (fork in scenario 1, cat in scenario 2,
+    /// skateboard under the feet in scenario 4…). Passing `null` releases the
+    /// previously carried item back to its original parent / pose.
+    /// </summary>
+    public void SetCarriedItem(GameObject item, Vector3 localPos, Vector3 localEuler)
+    {
+        // Restore previously carried item to its original transform.
+        if (_carriedItem != null)
+        {
+            _carriedItem.transform.SetParent(_carriedItemOriginalParent, worldPositionStays: false);
+            _carriedItem.transform.localPosition = _carriedItemOriginalLocalPos;
+            _carriedItem.transform.localRotation = _carriedItemOriginalLocalRot;
+            _carriedItem.transform.localScale    = _carriedItemOriginalLocalScale;
+            _carriedItem.SetActive(_carriedItemWasActive);
+            _carriedItem = null;
+        }
+
+        if (item == null) return;
+
+        _carriedItem = item;
+        _carriedItemOriginalParent    = item.transform.parent;
+        _carriedItemOriginalLocalPos  = item.transform.localPosition;
+        _carriedItemOriginalLocalRot  = item.transform.localRotation;
+        _carriedItemOriginalLocalScale = item.transform.localScale;
+        _carriedItemWasActive         = item.activeSelf;
+
+        item.transform.SetParent(transform, worldPositionStays: false);
+        item.transform.localPosition = localPos;
+        item.transform.localRotation = Quaternion.Euler(localEuler);
+        item.SetActive(true);
+    }
 
     /// <summary>
     /// Called by ScenarioManager BEFORE warping the child to a new spawn point.
@@ -304,6 +429,7 @@ public class ChildNPC : MonoBehaviour
             _held = false;
             transform.SetParent(_originalParent, worldPositionStays: false);
         }
+        SetCollidersEnabled(true);
         if (_agent != null && !_agent.enabled) _agent.enabled = true;
     }
 

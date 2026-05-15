@@ -55,6 +55,14 @@ public class DesktopTestRig : MonoBehaviour
     public bool wallCollisionEnabled = true;
     public float playerRadius = 0.25f;
     public LayerMask wallMask = ~0;
+    [Tooltip("Surfaces whose normal.y exceeds this threshold are treated as walkable slopes (not walls). 0.5 ≈ 60° max slope.")]
+    public float walkableNormalY = 0.5f;
+    [Tooltip("Maximum step height the player can climb without jumping (metres).")]
+    public float stepHeight = 0.7f;
+    [Tooltip("Speed multiplier while climbing stairs (1.0 = full speed, 0.4 = much slower).")]
+    [Range(0.1f, 1f)] public float climbSpeedMultiplier = 0.4f;
+    [Tooltip("How long the climb slowdown stays active after the last step-up (seconds). Re-applied on every step.")]
+    public float climbSlowDuration = 0.4f;
 
     [Header("Hand Simulation")]
     [Tooltip("When the user clicks, we project a small sphere at this distance forward to interact with the child.")]
@@ -77,6 +85,7 @@ public class DesktopTestRig : MonoBehaviour
     private ChildGrabber _grabHandComponent;
     private float _verticalVelocity;
     private bool _grounded = true;
+    private float _climbCooldown;
 
     private void Awake()
     {
@@ -197,6 +206,14 @@ public class DesktopTestRig : MonoBehaviour
         float speed = moveSpeed * (kb.leftShiftKey.isPressed ? sprintMultiplier : 1f)
                     * FloorObstacle.GetSpeedMultiplierAt(_xrOrigin.transform.position);
 
+        // Climb slowdown: while a step-up was triggered recently, the player
+        // moves slower so the staircase doesn't feel like a teleport.
+        if (_climbCooldown > 0f)
+        {
+            _climbCooldown -= Time.deltaTime;
+            speed *= climbSpeedMultiplier;
+        }
+
         Vector3 fwd = _camera.transform.forward; fwd.y = 0f; fwd.Normalize();
         Vector3 right = _camera.transform.right; right.y = 0f; right.Normalize();
         Vector3 move = (fwd * input.y + right * input.x) * speed * Time.deltaTime;
@@ -212,10 +229,57 @@ public class DesktopTestRig : MonoBehaviour
         Vector3 camPos = _camera.transform.position;
         Vector3 bottom = new Vector3(camPos.x, _xrOrigin.transform.position.y + playerRadius, camPos.z);
         Vector3 top    = bottom + Vector3.up * Mathf.Max(0.01f, playerHeight - playerRadius * 2f);
+        Vector3 dirN = desired.normalized;
 
-        if (Physics.CapsuleCast(bottom, top, playerRadius, desired.normalized, out RaycastHit hit,
+        if (Physics.CapsuleCast(bottom, top, playerRadius, dirN, out RaycastHit hit,
                                 desired.magnitude + 0.02f, wallMask, QueryTriggerInteraction.Ignore))
         {
+            // 1. Walkable slope (ramp). The ground probe handles the Y lift —
+            //    just let the horizontal move through.
+            if (hit.normal.y >= walkableNormalY) return desired;
+
+            // 2. Step-up: short vertical obstacle (stair riser). Lift the capsule
+            //    by stepHeight; if clear at that height, find the step's top by
+            //    probing down at a point that's GUARANTEED past the obstacle's
+            //    near face, then place the player on top of the step (Y + nudge
+            //    forward) so they land properly on its surface.
+            Vector3 raisedBottom = bottom + Vector3.up * stepHeight;
+            Vector3 raisedTop = top + Vector3.up * stepHeight;
+            if (!Physics.CapsuleCast(raisedBottom, raisedTop, playerRadius, dirN,
+                                     out _, desired.magnitude + 0.02f, wallMask,
+                                     QueryTriggerInteraction.Ignore))
+            {
+                // Probe origin must be past the obstacle's face. desired.magnitude
+                // is one frame of motion (tiny); we need to clear at least the
+                // capsule radius + a small epsilon to reach the obstacle's top.
+                float probeForward = Mathf.Max(0.15f, desired.magnitude + playerRadius + 0.05f);
+                Vector3 probeOrigin = raisedBottom + dirN * probeForward;
+                if (Physics.Raycast(probeOrigin, Vector3.down, out RaycastHit gh,
+                                    stepHeight * 1.5f, wallMask, QueryTriggerInteraction.Ignore))
+                {
+                    float currentY = _xrOrigin.transform.position.y;
+                    float climb = gh.point.y - currentY;
+                    // Only accept genuine UP steps within stepHeight. Skip downsteps
+                    // and bogus probes that hit a lower surface (e.g. the floor
+                    // before the step).
+                    if (climb > 0.01f && climb <= stepHeight)
+                    {
+                        Vector3 pos = _xrOrigin.transform.position;
+                        pos.y = gh.point.y + 0.01f;       // small offset to clear the step edge
+                        // Push the player horizontally past the step's near face
+                        // so they actually land on the step top, not in mid-air
+                        // before it (where gravity would pull them back down).
+                        Vector3 nudge = dirN * (playerRadius + 0.05f);
+                        pos.x += nudge.x;
+                        pos.z += nudge.z;
+                        _xrOrigin.transform.position = pos;
+                        _climbCooldown = climbSlowDuration; // slow next frames
+                        return Vector3.zero; // horizontal move already applied via the nudge
+                    }
+                }
+            }
+
+            // 3. Wall: slide along.
             Vector3 n = hit.normal; n.y = 0f;
             if (n.sqrMagnitude < 1e-4f) return Vector3.zero;
             n.Normalize();
@@ -328,16 +392,15 @@ public class DesktopTestRig : MonoBehaviour
             _virtualHand = null;
         }
 
-        // E key → deliberate grab (one-shot save). Held = persistent grab hand.
+        // E key → deliberate grab (one-shot save). Held = persistent grab hand
+        // (parented to the camera, so it tracks the head naturally — no per-frame
+        // raycast, no jitter).
         if (kb != null)
         {
             if (kb.eKey.wasPressedThisFrame)
                 StartGrabHand();
-            else if (_grabHand != null)
-            {
-                if (kb.eKey.isPressed) UpdateGrabHandPosition();
-                else                   StopGrabHand();
-            }
+            else if (_grabHand != null && !kb.eKey.isPressed)
+                StopGrabHand();
         }
     }
 
@@ -368,7 +431,13 @@ public class DesktopTestRig : MonoBehaviour
         if (_grabHand != null) return;
 
         _grabHand = new GameObject("DesktopGrabHand");
-        _grabHand.transform.position = ComputeHandPosition(reachDistance);
+        // Parent under the camera so the hand follows head movement smoothly.
+        // Re-raycasting every frame (the old behavior) made the hand jitter
+        // whenever a different collider was hit forward (a wall, a step, a
+        // piece of furniture) — and the held toddler followed the jitter.
+        _grabHand.transform.SetParent(_camera.transform, worldPositionStays: false);
+        _grabHand.transform.localPosition = new Vector3(0f, -0.2f, reachDistance);
+        _grabHand.transform.localRotation = Quaternion.identity;
         var rb = _grabHand.AddComponent<Rigidbody>();
         rb.isKinematic = true;
         rb.useGravity = false;
@@ -382,17 +451,11 @@ public class DesktopTestRig : MonoBehaviour
         _grabHandComponent.Trigger();
     }
 
-    private void UpdateGrabHandPosition()
-    {
-        if (_grabHand == null) return;
-        // Follow the camera reach point so the held baby tracks the player's view.
-        _grabHand.transform.position = ComputeHandPosition(reachDistance);
-    }
-
     private void StopGrabHand()
     {
         if (_grabHand == null) return;
         if (_grabHandComponent != null) _grabHandComponent.Release();
+        _grabHand.transform.SetParent(null, worldPositionStays: true);
         Destroy(_grabHand);
         _grabHand = null;
         _grabHandComponent = null;

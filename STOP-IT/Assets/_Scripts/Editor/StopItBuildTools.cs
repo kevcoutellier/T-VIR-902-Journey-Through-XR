@@ -234,6 +234,7 @@ public static class StopItBuildTools
                 updated++;
             }
             go.transform.position = sp.pos;
+            go.transform.rotation = Quaternion.Euler(0f, sp.yaw, 0f);
             EditorUtility.SetDirty(go);
         }
 
@@ -265,17 +266,20 @@ public static class StopItBuildTools
         configs[1] = BuildConfig("Cuisine — Le chat dans le micro-ondes", "ATTRAPE LE BÉBÉ AVANT LE CHAT !",
                                  "SpawnChild_Kitchen",  "HazardZone_Microwave",       "SpawnPlayer_Kitchen");
 
-        // 3. Bathroom - cleaning product
-        configs[2] = BuildConfig("Salle de bain — Le produit ménager", "BLOQUE-LE !",
+        // 3. Bathroom - cleaning product (swap mechanic — pick up water bottle, drop on hazard)
+        configs[2] = BuildConfig("Salle de bain — Le produit ménager", "ÉCHANGE LE PRODUIT !",
                                  "SpawnChild_Bathroom", "HazardZone_CleaningProduct", "SpawnPlayer_Bathroom");
+        configs[2].waterBottle = Object.FindAnyObjectByType<WaterBottle>();
 
-        // 4. Stairs - skateboard
+        // 4. Stairs - skateboard (cosmetic skateboard visual under the NPC)
         configs[3] = BuildConfig("Escalier — Le skateboard",          "RATTRAPE-LE !",
                                  "SpawnChild_Stairs",   "HazardZone_StairsBottom",    "SpawnPlayer_Stairs");
+        configs[3].showSkateboard = true;
 
-        // 5. Bedroom - climbing east window ledge
+        // 5. Bedroom - climbing east window ledge (pigeon flies away when NPC approaches)
         configs[4] = BuildConfig("Chambre — Le rebord de fenêtre",    "PORTE-LE LOIN DE LA FENÊTRE !",
                                  "SpawnChild_Bedroom",  "HazardZone_Window",          "SpawnPlayer_Bedroom");
+        configs[4].pigeon = Object.FindAnyObjectByType<PigeonEscape>();
 
         // 6. Pigeon room - child climbs south window to catch pigeon
         configs[5] = BuildConfig("Attraper le pigeon — La fenêtre du sud", "ATTRAPE-LE AVANT QU'IL TOMBE !",
@@ -549,6 +553,299 @@ public static class StopItBuildTools
         if (guids.Length == 0) return;
         var mat = AssetDatabase.LoadAssetAtPath<Material>(AssetDatabase.GUIDToAssetPath(guids[0]));
         if (mat != null) { var r = go.GetComponent<Renderer>(); if (r) r.sharedMaterial = mat; }
+    }
+
+    [MenuItem("Tools/STOP IT/Add First Stair Step")]
+    public static void AddFirstStairStep()
+    {
+        // Some scenes are missing Step_0 — the first riser. Without it, the player
+        // has to climb 60 cm in one move (floor → Step_1 top), which is taller
+        // than the step-up threshold. This menu re-adds a Step_0 sized to match
+        // the existing Step_1, positioned 0.45 m south and 0.30 m lower.
+
+        var step1 = GameObject.Find("Step_1");
+        if (step1 == null)
+        {
+            Debug.LogError("[STOP IT] Step_1 not found — cannot derive Step_0 position.");
+            return;
+        }
+
+        var existing = GameObject.Find("Step_0");
+        if (existing != null) Undo.DestroyObjectImmediate(existing);
+
+        var step = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        step.name = "Step_0";
+        step.transform.SetParent(step1.transform.parent, false);
+        step.transform.position = new Vector3(
+            step1.transform.position.x,
+            step1.transform.position.y - step1.transform.localScale.y,   // one riser lower
+            step1.transform.position.z - step1.transform.localScale.z    // one depth south
+        );
+        step.transform.localScale = step1.transform.localScale;
+        step.isStatic = true;
+
+        // Match material to other stair cubes.
+        var guids = AssetDatabase.FindAssets("Mat_Floor t:Material");
+        if (guids.Length > 0)
+        {
+            var mat = AssetDatabase.LoadAssetAtPath<Material>(AssetDatabase.GUIDToAssetPath(guids[0]));
+            if (mat != null) step.GetComponent<Renderer>().sharedMaterial = mat;
+        }
+
+        Undo.RegisterCreatedObjectUndo(step, "Create Step_0");
+        EditorUtility.SetDirty(step);
+        if (!Application.isPlaying) UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
+        Debug.Log($"[STOP IT] Step_0 created at {step.transform.position} (matched Step_1's scale).");
+    }
+
+    [MenuItem("Tools/STOP IT/Add Stair Ramp")]
+    public static void AddStairRamp()
+    {
+        // Bottom of stairs at (5, 0, -5.5), top at (5, 3, -1). The ramp is an
+        // invisible inclined slab the player can walk on — the visible stair cubes
+        // remain unchanged. Configured to NOT contribute to the NavMesh bake so
+        // the NPC keeps using the cube tops for its path.
+        var existing = GameObject.Find("StairRamp");
+        if (existing != null)
+        {
+            Undo.DestroyObjectImmediate(existing);
+            Debug.Log("[STOP IT] Existing StairRamp removed before re-creating.");
+        }
+
+        Transform parent = GameObject.Find("Staircase")?.transform
+                          ?? GameObject.Find("House")?.transform;
+
+        var ramp = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        ramp.name = "StairRamp";
+        if (parent != null) ramp.transform.SetParent(parent, false);
+
+        // Geometry: midpoint (5, 1.5, -3.25), length ~5.4m along slope,
+        // angle atan2(3, 4.5) ≈ 33.69°.
+        ramp.transform.position = new Vector3(5f, 1.5f, -3.25f);
+        ramp.transform.rotation = Quaternion.Euler(-33.69f, 0f, 0f);
+        ramp.transform.localScale = new Vector3(2f, 0.1f, 5.41f);
+
+        // Invisible: keep collider, drop renderer.
+        var mr = ramp.GetComponent<MeshRenderer>();
+        if (mr != null) Object.DestroyImmediate(mr);
+        var mf = ramp.GetComponent<MeshFilter>();
+        if (mf != null) Object.DestroyImmediate(mf);
+
+        // Keep the collider for the player capsule to slide on.
+        var col = ramp.GetComponent<BoxCollider>();
+        if (col != null) col.isTrigger = false;
+
+        // Exclude from NavMesh so the NPC's path keeps following the stair cubes.
+        var modifier = ramp.AddComponent<Unity.AI.Navigation.NavMeshModifier>();
+        modifier.overrideArea = true;
+        modifier.area = 1; // NotWalkable
+        modifier.ignoreFromBuild = true;
+
+        Undo.RegisterCreatedObjectUndo(ramp, "Create StairRamp");
+        EditorUtility.SetDirty(ramp);
+        if (!Application.isPlaying) UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
+        Debug.Log("[STOP IT] StairRamp created (invisible slope, 33.69°) — walk forward to climb. NavMesh ignores it.");
+    }
+
+    [MenuItem("Tools/STOP IT/Apply Scenario Extras")]
+    public static void ApplyScenarioExtras()
+    {
+        int updates = 0;
+
+        var sm = Object.FindAnyObjectByType<ScenarioManager>();
+        if (sm != null && sm.scenarios != null)
+        {
+            // Index 0 = Salon — toddler carries a fork toward the outlet.
+            if (sm.scenarios.Length > 0)
+            {
+                var fork = GameObject.Find("Fork");
+                if (fork != null)
+                {
+                    PrepareCarriable(fork);
+                    sm.scenarios[0].carriedItem = fork;
+                    sm.scenarios[0].carriedItemLocalPosition = new Vector3(0.6f, 0.1f, 0.5f);
+                    sm.scenarios[0].carriedItemLocalEuler    = new Vector3(0f, 0f, 0f);
+                    Debug.Log("[STOP IT] config[0].carriedItem ← Fork");
+                }
+                else Debug.LogWarning("[STOP IT] Fork GameObject not found in scene.");
+                updates++;
+            }
+            // Index 1 = Kitchen — toddler carries the cat toward the microwave.
+            if (sm.scenarios.Length > 1)
+            {
+                var cat = GameObject.Find("Cat");
+                if (cat != null)
+                {
+                    PrepareCarriable(cat);
+                    sm.scenarios[1].carriedItem = cat;
+                    sm.scenarios[1].carriedItemLocalPosition = new Vector3(0.7f, 0.2f, 0.5f);
+                    sm.scenarios[1].carriedItemLocalEuler    = new Vector3(0f, 0f, 0f);
+                    Debug.Log("[STOP IT] config[1].carriedItem ← Cat");
+                }
+                else Debug.LogWarning("[STOP IT] Cat GameObject not found in scene.");
+                updates++;
+            }
+            // Index 2 = Bathroom — wire WaterBottle + update action hint.
+            if (sm.scenarios.Length > 2)
+            {
+                var wb = Object.FindAnyObjectByType<WaterBottle>();
+                if (wb != null) sm.scenarios[2].waterBottle = wb;
+                sm.scenarios[2].actionHint = "ÉCHANGE LE PRODUIT !";
+                updates++;
+            }
+            // Index 3 = Stairs — carry the existing static Skateboard under the
+            // toddler's feet for the duration of the scenario. If the Skateboard
+            // was deleted from the scene, recreate it as a placeholder cube.
+            if (sm.scenarios.Length > 3)
+            {
+                sm.scenarios[3].showSkateboard = false; // deprecated path
+                var skate = GameObject.Find("Skateboard");
+                if (skate == null)
+                {
+                    var parent = GameObject.Find("Staircase")?.transform
+                              ?? GameObject.Find("House")?.transform;
+                    skate = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                    skate.name = "Skateboard";
+                    if (parent != null) skate.transform.SetParent(parent, false);
+                    skate.transform.position = new Vector3(5f, 3.05f, -1f);
+                    skate.transform.localScale = new Vector3(0.7f, 0.05f, 0.25f);
+                    var matGuids = AssetDatabase.FindAssets("Mat_Furniture t:Material");
+                    if (matGuids.Length > 0)
+                    {
+                        var mat = AssetDatabase.LoadAssetAtPath<Material>(AssetDatabase.GUIDToAssetPath(matGuids[0]));
+                        if (mat != null) skate.GetComponent<Renderer>().sharedMaterial = mat;
+                    }
+                    // Skateboard must not have a collider while carried (would push
+                    // the toddler around). Drop it.
+                    var sCol = skate.GetComponent<Collider>();
+                    if (sCol != null) Object.DestroyImmediate(sCol);
+                    Undo.RegisterCreatedObjectUndo(skate, "Recreate Skateboard");
+                    Debug.Log("[STOP IT] Skateboard placeholder re-created (it was missing).");
+                }
+                else
+                {
+                    // Drop the collider on the existing one too — same reason.
+                    var sCol = skate.GetComponent<Collider>();
+                    if (sCol != null) Object.DestroyImmediate(sCol);
+                }
+                PrepareCarriable(skate);
+                sm.scenarios[3].carriedItem = skate;
+                sm.scenarios[3].carriedItemLocalPosition = new Vector3(0f, -1.0f, 0f);
+                sm.scenarios[3].carriedItemLocalEuler    = new Vector3(0f, 0f, 0f);
+                Debug.Log("[STOP IT] config[3].carriedItem ← Skateboard");
+                updates++;
+            }
+            // Index 4 = Bedroom — wire PigeonEscape (include inactive so we still
+            // find it after a previous play hid its visuals).
+            if (sm.scenarios.Length > 4)
+            {
+                var pe = Object.FindAnyObjectByType<PigeonEscape>(FindObjectsInactive.Include);
+                if (pe != null) sm.scenarios[4].pigeon = pe;
+                updates++;
+            }
+            EditorUtility.SetDirty(sm);
+
+            // Diagnostic dump so we know the array is now in the expected state.
+            var sb = new System.Text.StringBuilder("[STOP IT] Scenario carriedItem wiring after Apply:\n");
+            for (int i = 0; i < sm.scenarios.Length; i++)
+            {
+                var c = sm.scenarios[i];
+                sb.AppendLine($"  [{i}] {c.scenarioName} → carriedItem={(c.carriedItem ? c.carriedItem.name : "<null>")}, " +
+                              $"pos={c.carriedItemLocalPosition}, euler={c.carriedItemLocalEuler}, showSkate={c.showSkateboard}");
+            }
+            Debug.Log(sb.ToString());
+        }
+        else
+        {
+            Debug.LogWarning("[STOP IT] ScenarioManager or its scenarios array not found.");
+        }
+
+        // Bump grabRadius on every ChildGrabber for VR room-scale comfort.
+        int handCount = 0;
+        foreach (var grabber in Object.FindObjectsByType<ChildGrabber>(FindObjectsInactive.Include))
+        {
+            grabber.grabRadius = 0.30f;
+            EditorUtility.SetDirty(grabber);
+            handCount++;
+        }
+
+        if (!Application.isPlaying) UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
+        Debug.Log($"[STOP IT] Scenario extras applied — {updates} configs updated, grabRadius set on {handCount} hand(s).");
+    }
+
+    /// <summary>
+    /// Unmarks the GameObject as static (Static-batched renderers don't follow
+    /// their transform at runtime) and disables its colliders, so it can be
+    /// parented to the NPC for carrying without pushing physics around.
+    /// </summary>
+    private static void PrepareCarriable(GameObject go)
+    {
+        if (go == null) return;
+        GameObjectUtility.SetStaticEditorFlags(go, 0);
+        go.isStatic = false;
+        foreach (var col in go.GetComponentsInChildren<Collider>(includeInactive: true))
+            col.enabled = false;
+        EditorUtility.SetDirty(go);
+    }
+
+    [MenuItem("Tools/STOP IT/Create WaterBottle (Bathroom)")]
+    public static void CreateWaterBottle()
+    {
+        // Bail out if it already exists.
+        if (GameObject.Find("WaterBottle") != null)
+        {
+            Debug.Log("[STOP IT] WaterBottle already exists in scene — skipping.");
+            return;
+        }
+
+        Transform parent = GameObject.Find("Room_Bathroom")?.transform;
+        if (parent == null) parent = GameObject.Find("House")?.transform;
+
+        var bottle = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        bottle.name = "WaterBottle";
+        if (parent != null) bottle.transform.SetParent(parent, false);
+        bottle.transform.position = new Vector3(-3.5f, 0.9f, -5.3f);
+        bottle.transform.localScale = new Vector3(0.08f, 0.12f, 0.08f);
+
+        // Try cyan-ish material first (Mat_Water) then fall back.
+        var guids = AssetDatabase.FindAssets("Mat_Water t:Material");
+        if (guids.Length == 0) guids = AssetDatabase.FindAssets("Mat_Wall t:Material");
+        if (guids.Length > 0)
+        {
+            var mat = AssetDatabase.LoadAssetAtPath<Material>(AssetDatabase.GUIDToAssetPath(guids[0]));
+            if (mat != null) bottle.GetComponent<Renderer>().sharedMaterial = mat;
+        }
+
+        // Trigger collider so the hand's overlap-sphere detects it without blocking.
+        var col = bottle.GetComponent<Collider>();
+        if (col != null) col.isTrigger = true;
+
+        var rb = bottle.AddComponent<Rigidbody>();
+        rb.isKinematic = true;
+        rb.useGravity = false;
+
+        var wb = bottle.AddComponent<WaterBottle>();
+
+        // Floating "grab me" chevron above the bottle.
+        var indicator = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        indicator.name = "PickupIndicator";
+        indicator.transform.SetParent(bottle.transform, false);
+        indicator.transform.localPosition = new Vector3(0f, 2.5f, 0f);
+        indicator.transform.localRotation = Quaternion.Euler(180f, 0f, 0f);
+        indicator.transform.localScale = new Vector3(3f, 1.5f, 3f);
+        var indCol = indicator.GetComponent<Collider>();
+        if (indCol != null) Object.DestroyImmediate(indCol);
+        if (guids.Length > 0)
+        {
+            var mat = AssetDatabase.LoadAssetAtPath<Material>(AssetDatabase.GUIDToAssetPath(guids[0]));
+            if (mat != null) indicator.GetComponent<Renderer>().sharedMaterial = mat;
+        }
+        wb.pickupIndicator = indicator;
+
+        Undo.RegisterCreatedObjectUndo(bottle, "Create WaterBottle");
+        EditorUtility.SetDirty(bottle);
+        if (!Application.isPlaying) UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
+        Debug.Log("[STOP IT] WaterBottle created at (-3, 0.9, -4) in Room_Bathroom.");
     }
 
     [MenuItem("Tools/STOP IT/Spawn Floor Obstacles")]
