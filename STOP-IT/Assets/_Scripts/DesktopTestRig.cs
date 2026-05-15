@@ -12,6 +12,7 @@ using Unity.XR.CoreUtils;
 /// Controls (Editor / Standalone):
 ///  • WASD or arrows — move
 ///  • Mouse          — look around (hold right mouse button OR always — see "Mouse Look Mode")
+///  • Space          — jump (desktop-only stand-in for the VR Jump action)
 ///  • Left click     — "block" hand: brief sphere that touches the child (reflex slap)
 ///  • E (held)       — "grab" hand that picks the baby up (one-shot save)
 ///  • R              — restart current scenario
@@ -40,6 +41,16 @@ public class DesktopTestRig : MonoBehaviour
     public LookMode mouseLookMode = LookMode.RightMouseHeld;
     public float playerHeight = 1.7f;
 
+    [Header("Jump")]
+    [Tooltip("Peak jump height in metres when pressing Space.")]
+    public float jumpHeight = 1.0f;
+    [Tooltip("Vertical acceleration (m/s²). Stronger than -9.81 for a snappier game feel.")]
+    public float gravity = -18f;
+    [Tooltip("Distance below the feet sampled to detect the floor.")]
+    public float groundProbeDistance = 1.0f;
+    [Tooltip("Layers considered as walkable ground (floors, stairs, ledges).")]
+    public LayerMask groundMask = ~0;
+
     [Header("Wall Collision")]
     public bool wallCollisionEnabled = true;
     public float playerRadius = 0.25f;
@@ -64,6 +75,8 @@ public class DesktopTestRig : MonoBehaviour
     private float _handHideAt;
     private GameObject _grabHand;
     private ChildGrabber _grabHandComponent;
+    private float _verticalVelocity;
+    private bool _grounded = true;
 
     private void Awake()
     {
@@ -100,7 +113,7 @@ public class DesktopTestRig : MonoBehaviour
         _pitch = NormalizeAngle(e.x);
         _yaw   = NormalizeAngle(e.y);
 
-        Debug.Log("[DesktopTestRig] Active — WASD move | RMB look | LMB block | E grab | M menu | R restart.");
+        Debug.Log("[DesktopTestRig] Active — WASD move | Space jump | RMB look | LMB block | E grab | M menu | R restart.");
     }
 
     private void Update()
@@ -109,6 +122,7 @@ public class DesktopTestRig : MonoBehaviour
 
         HandleMouseLook();
         HandleMovement();
+        HandleJump();
         HandleHotkeys();
         HandleHandSimulation();
     }
@@ -211,6 +225,52 @@ public class DesktopTestRig : MonoBehaviour
                 return Vector3.zero;
         }
         return desired;
+    }
+
+    // ── Jump ───────────────────────────────────────────────────────────────
+    private void HandleJump()
+    {
+        if (_xrOrigin == null) return;
+
+        var kb = Keyboard.current;
+        Vector3 pos = _xrOrigin.transform.position;
+
+        // Sample the ground below the feet. The ray starts slightly above to avoid
+        // starting inside a step's collider when climbing stairs.
+        float groundY = float.NegativeInfinity;
+        Vector3 probeOrigin = pos + Vector3.up * 0.1f;
+        if (Physics.Raycast(probeOrigin, Vector3.down, out RaycastHit hit,
+                            groundProbeDistance + 0.1f, groundMask, QueryTriggerInteraction.Ignore))
+        {
+            groundY = hit.point.y;
+        }
+
+        // Jump impulse: only while grounded and the player is at (or just above) the floor.
+        bool jumpPressed = kb != null && kb.spaceKey.wasPressedThisFrame;
+        if (jumpPressed && _grounded)
+        {
+            _verticalVelocity = Mathf.Sqrt(2f * jumpHeight * -gravity);
+            _grounded = false;
+        }
+
+        // Integrate gravity.
+        _verticalVelocity += gravity * Time.deltaTime;
+        pos.y += _verticalVelocity * Time.deltaTime;
+
+        // Land on the detected ground.
+        if (!float.IsNegativeInfinity(groundY) && pos.y <= groundY)
+        {
+            pos.y = groundY;
+            _verticalVelocity = 0f;
+            _grounded = true;
+        }
+        else if (float.IsNegativeInfinity(groundY))
+        {
+            // No ground found below — keep falling but treat as airborne.
+            _grounded = false;
+        }
+
+        _xrOrigin.transform.position = pos;
     }
 
     // ── Hotkeys ────────────────────────────────────────────────────────────
