@@ -1,5 +1,6 @@
 pdf_content.txt
 .claude/settings.local.json
+.claude/worktrees/
 
 # Unity generated
 [Ll]ibrary/
