@@ -1,8 +1,8 @@
 ---
-owner: FREE
-since: 
-feature: 
-expected_release: 
+owner: Paulin
+since: 2026-05-15 (heure actuelle)
+feature: scenario gameplay adjustments (spawn positions, bathroom swap, skate/pigeon placeholders, drop fix)
+expected_release: 2026-05-15 (dans 1-2h)
 ---
 
 # Verrou de la scène principale `LivingRoom.unity`
