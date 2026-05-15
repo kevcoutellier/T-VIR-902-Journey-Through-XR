@@ -293,24 +293,43 @@ public static class HouseBuilder
     }
 
     // ─── SPAWN POINTS ──────────────────────────────────────────────────
+    // Each child spawn is placed AT THE ROOM'S ENTRANCE so the NPC walks
+    // a different path per scenario, ending at that room's hazard.
     static void Spawns(GameObject p)
     {
-        // Salon: child near sofa, player in center
-        SP(p, "SpawnChild_Salon", new Vector3(-4, 0, 2.5f));
-        SP(p, "SpawnPlayer_Salon", new Vector3(-3, 0, 3.5f));
-        // Kitchen: child near table, player at door
-        SP(p, "SpawnChild_Kitchen", new Vector3(4, 0, 3.5f));
-        SP(p, "SpawnPlayer_Kitchen", new Vector3(2, 0, 2.5f));
-        // Stairs: child at top landing, player at bottom in hallway
-        SP(p, "SpawnChild_Stairs", new Vector3(5, H, -1));
-        SP(p, "SpawnPlayer_Stairs", new Vector3(3, 0, 0));
-        // Bathroom: child near cabinet, player near door
-        SP(p, "SpawnChild_Bathroom", new Vector3(-3, 0, -3));
-        SP(p, "SpawnPlayer_Bathroom", new Vector3(-2, 0, -2));
-        // Bedroom (1st floor): child near desk/window, player near stairs
-        SP(p, "SpawnChild_Bedroom", new Vector3(5, H, 1));
-        SP(p, "SpawnPlayer_Bedroom", new Vector3(2, H, -2));
+        foreach (var sp in SpawnDefinitions())
+            SP(p, sp.name, sp.pos);
     }
+
+    /// <summary>
+    /// Authoritative list of spawn-point names + positions. Shared with
+    /// StopItBuildTools.RepositionSpawns so we never drift between code paths.
+    /// Hallway doors are at: Salon X∈[-1.5,0]/Z=1, Kitchen X∈[0,1.5]/Z=1,
+    /// Bathroom X∈[-1.5,0]/Z=-1, Stairs X∈[0,1.5]/Z=-1.
+    /// </summary>
+    public static (string name, Vector3 pos)[] SpawnDefinitions() => new (string, Vector3)[]
+    {
+        // Salon: child enters via south door, walks west toward outlet at (-6.85, 0.3, 3)
+        ("SpawnChild_Salon",     new Vector3(-0.75f, 0f, 1.5f)),
+        ("SpawnPlayer_Salon",    new Vector3(-3f,    0f, 2.5f)),
+
+        // Kitchen: child enters via south door, walks NE toward microwave at (2.5, 1.05, 5.5)
+        ("SpawnChild_Kitchen",   new Vector3( 0.75f, 0f, 1.5f)),
+        ("SpawnPlayer_Kitchen",  new Vector3( 2f,    0f, 3f)),
+
+        // Stairs: child starts at TOP landing (skateboard waiting there) and rolls down toward
+        // HazardZone_StairsBottom at (5, 0.2, -5.5). Player blocks at the bottom.
+        ("SpawnChild_Stairs",    new Vector3( 5f,    H,  -1f)),
+        ("SpawnPlayer_Stairs",   new Vector3( 5f,    0f, -3f)),
+
+        // Bathroom: child enters via north door, walks south toward cleaning product at (-4, 0.9, -5.3)
+        ("SpawnChild_Bathroom",  new Vector3(-0.75f, 0f, -1.5f)),
+        ("SpawnPlayer_Bathroom", new Vector3(-2f,    0f, -3f)),
+
+        // Bedroom (1F): child arrives at top-of-stairs landing, walks east toward window ledge at (6.85, 4.1, 0)
+        ("SpawnChild_Bedroom",   new Vector3( 4f,    H, -0.5f)),
+        ("SpawnPlayer_Bedroom",  new Vector3( 5.5f,  H,  0f)),
+    };
 
     // ═══ HELPERS ═══════════════════════════════════════════════════════
     static GameObject Room(GameObject p, string n)

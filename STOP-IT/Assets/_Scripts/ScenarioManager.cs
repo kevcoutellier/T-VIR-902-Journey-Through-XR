@@ -110,6 +110,7 @@ public class ScenarioManager : MonoBehaviour
     private void ActivateScenario(int index)
     {
         var config = scenarios[index];
+        string label = string.IsNullOrEmpty(config.scenarioName) ? $"#{index}" : config.scenarioName;
 
         // Teleport child NPC
         if (childNPC != null && config.childSpawnPoint != null)
@@ -126,10 +127,24 @@ public class ScenarioManager : MonoBehaviour
 
             childNPC.transform.rotation = config.childSpawnPoint.rotation;
         }
+        else if (childNPC != null && config.childSpawnPoint == null)
+        {
+            // Without a spawn point we'd leave the NPC where the previous scenario
+            // dropped it — making every round look like the first. Surface this loudly.
+            Debug.LogWarning($"[ScenarioManager] '{label}' has no childSpawnPoint — NPC stays in place. " +
+                             "Run Tools → STOP IT → Reposition Spawns, then Wire Scenarios.", this);
+        }
 
         // Set the child's target hazard
         if (childNPC != null && config.hazardZone != null)
+        {
             childNPC.targetHazard = config.hazardZone;
+        }
+        else if (childNPC != null && config.hazardZone == null)
+        {
+            Debug.LogWarning($"[ScenarioManager] '{label}' has no hazardZone — NPC keeps the previous target. " +
+                             "Run Tools → STOP IT → Wire Scenarios.", this);
+        }
 
         // Teleport player
         if (_xrOrigin != null && config.playerSpawnPoint != null)

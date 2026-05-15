@@ -252,8 +252,13 @@ public class DesktopTestRig : MonoBehaviour
         var kb = Keyboard.current;
         if (mouse == null) return;
 
+        // Don't spawn a virtual hand when the click lands on a UI element
+        // (otherwise clicking a menu button also produces a phantom slap).
+        bool overUI = UnityEngine.EventSystems.EventSystem.current != null
+                   && UnityEngine.EventSystems.EventSystem.current.IsPointerOverGameObject();
+
         // LMB → block (existing reflex slap)
-        if (mouse.leftButton.wasPressedThisFrame)
+        if (!overUI && mouse.leftButton.wasPressedThisFrame)
             SpawnVirtualHand();
 
         if (_virtualHand != null && Time.time >= _handHideAt)
