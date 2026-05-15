@@ -120,9 +120,16 @@ public class ScenarioManager : MonoBehaviour
             childNPC.ResetForScenario();
 
             var agent = childNPC.GetComponent<NavMeshAgent>();
-            if (agent != null && agent.isOnNavMesh)
-                agent.Warp(config.childSpawnPoint.position);
-            else
+            // NavMeshAgent.Warp() is the canonical way to (re-)bind an agent onto the NavMesh.
+            // Calling it unconditionally is correct even when the agent was just re-enabled
+            // after a Grab() (isOnNavMesh = false in that state). Checking isOnNavMesh first
+            // would skip the Warp and leave the agent floating off-mesh, so SetDestination
+            // later in BeginWalkAfterDelay silently no-ops — that's why scenarios after a
+            // grabbed-win never re-pathed.
+            bool warped = false;
+            if (agent != null && agent.enabled)
+                warped = agent.Warp(config.childSpawnPoint.position);
+            if (!warped)
                 childNPC.transform.position = config.childSpawnPoint.position;
 
             childNPC.transform.rotation = config.childSpawnPoint.rotation;
