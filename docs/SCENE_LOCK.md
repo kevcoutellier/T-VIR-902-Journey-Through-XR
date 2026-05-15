@@ -1,8 +1,8 @@
 ---
-owner: FREE
-since: 
-feature: 
-expected_release: 
+owner: Paulin
+since: 2026-05-15 11:08
+feature: Wire scenarios 2-5 in LivingRoom + desktop Space jump
+expected_release: 2026-05-15 11:40
 ---
 
 # Verrou de la scène principale `LivingRoom.unity`
