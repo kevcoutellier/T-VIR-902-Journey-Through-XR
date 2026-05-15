@@ -24,6 +24,10 @@ public class ScenarioManager : MonoBehaviour
         public HazardZone hazardZone;
         public Transform playerSpawnPoint;
         public GameObject[] scenarioObjects;
+        [Tooltip("Override the child NPC start delay (seconds). " +
+                 "Negative = use ChildNPC.startDelay default. " +
+                 "Set very high (e.g. 999) when a WindowInteractable triggers the walk.")]
+        public float childStartDelayOverride = -1f;
     }
 
     [Header("References")]
@@ -40,6 +44,7 @@ public class ScenarioManager : MonoBehaviour
     private int _currentIndex = -1;
     private int _queuedIndex = -1;
     private XROrigin _xrOrigin;
+    private float _originalChildStartDelay = -1f;
 
     public static ScenarioManager Instance { get; private set; }
 
@@ -155,6 +160,16 @@ public class ScenarioManager : MonoBehaviour
             // dropped it — making every round look like the first. Surface this loudly.
             Debug.LogWarning($"[ScenarioManager] '{label}' has no childSpawnPoint — NPC stays in place. " +
                              "Run Tools → STOP IT → Reposition Spawns, then Wire Scenarios.", this);
+        }
+
+        // Apply per-scenario child start delay (save original on first call so we can restore it)
+        if (childNPC != null)
+        {
+            if (_originalChildStartDelay < 0f)
+                _originalChildStartDelay = childNPC.startDelay;
+            childNPC.startDelay = config.childStartDelayOverride >= 0f
+                ? config.childStartDelayOverride
+                : _originalChildStartDelay;
         }
 
         // Set the child's target hazard

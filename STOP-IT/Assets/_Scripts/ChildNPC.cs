@@ -60,6 +60,7 @@ public class ChildNPC : MonoBehaviour
     private bool _isMoving = false;
     private bool _isStopped = false;
     private bool _held = false;
+    private bool _forceWalkNow = false;
     private Transform _originalParent;
     private Vector3 _lastTargetPos;
     private float _nextRepathTime;
@@ -195,6 +196,33 @@ public class ChildNPC : MonoBehaviour
     }
 
     // ── Public API ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Temporarily pauses movement (used by WindowOpener while the child "opens" the window).
+    /// Does NOT set _isStopped, so Intercept/Grab still work, and ResumeWalk can restart movement.
+    /// </summary>
+    public void PauseWalk()
+    {
+        if (_isStopped) return;
+        _isMoving = false;
+        if (_agent != null && _agent.isActiveAndEnabled && _agent.isOnNavMesh)
+            _agent.isStopped = true;
+    }
+
+    /// <summary>Resumes movement after PauseWalk(). Optionally retargets to a new hazard zone.</summary>
+    public void ResumeWalk(HazardZone newTarget = null)
+    {
+        if (_isStopped) return;  // truly stopped (intercepted/grabbed) — don't restart
+        if (newTarget != null)
+        {
+            targetHazard = newTarget;
+            _lastTargetPos = Vector3.positiveInfinity; // force repath
+        }
+        if (_agent != null && _agent.isActiveAndEnabled && _agent.isOnNavMesh)
+            _agent.isStopped = false;
+        _isMoving = true;
+    }
+
     /// <summary>Called by PlayerBlocker to stop the child.</summary>
     public void Intercept()
     {
@@ -262,8 +290,15 @@ public class ChildNPC : MonoBehaviour
     /// Called by ScenarioManager BEFORE warping the child to a new spawn point.
     /// Forces detachment from any held parent and re-enables the NavMeshAgent.
     /// </summary>
+    /// <summary>
+    /// Called by WindowInteractable (scenario 6) to bypass the start delay and walk immediately.
+    /// Safe to call even if the child hasn't started the delay countdown yet.
+    /// </summary>
+    public void ForceStartWalk() => _forceWalkNow = true;
+
     public void ResetForScenario()
     {
+        _forceWalkNow = false;
         if (_held)
         {
             _held = false;
@@ -283,7 +318,14 @@ public class ChildNPC : MonoBehaviour
     // ── Private ────────────────────────────────────────────────────────────
     private IEnumerator BeginWalkAfterDelay()
     {
-        yield return new WaitForSeconds(startDelay);
+        // Count down the start delay, but WindowInteractable can bypass it via ForceStartWalk().
+        float elapsed = 0f;
+        while (elapsed < startDelay && !_forceWalkNow)
+        {
+            elapsed += Time.deltaTime;
+            yield return null;
+        }
+        _forceWalkNow = false;
 
         if (_isStopped || targetHazard == null) yield break;
 

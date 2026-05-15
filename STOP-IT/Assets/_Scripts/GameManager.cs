@@ -20,7 +20,7 @@ public class GameManager : MonoBehaviour
     public float scenarioDuration = 30f;
 
     [Tooltip("How many scenarios before game over")]
-    public int totalScenarios = 5;
+    public int totalScenarios = 6;
 
     [Header("Feedback")]
     public AudioSource audioSource;
