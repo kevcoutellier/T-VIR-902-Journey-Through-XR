@@ -199,6 +199,49 @@ public static class StopItBuildTools
         if (!Application.isPlaying) UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
     }
 
+    [MenuItem("Tools/STOP IT/Setup All Scenarios")]
+    public static void SetupAllScenarios()
+    {
+        Debug.Log("[STOP IT] Setup All Scenarios — running Reposition Spawns → Bake NavMesh → Wire Scenarios.");
+        RepositionSpawns();
+        BakeNavMesh();
+        WireScenarios();
+        Debug.Log("[STOP IT] Setup All Scenarios — done. Read warnings (if any) above and Play to verify each room has its own NPC path.");
+    }
+
+    [MenuItem("Tools/STOP IT/Reposition Spawns")]
+    public static void RepositionSpawns()
+    {
+        var house = GameObject.Find("House");
+        Transform parent = house != null ? house.transform : null;
+        if (parent == null)
+            Debug.LogWarning("[STOP IT] No 'House' GameObject found — orphan spawns will be created at scene root.");
+
+        int created = 0, updated = 0;
+        foreach (var sp in HouseBuilder.SpawnDefinitions())
+        {
+            var go = GameObject.Find(sp.name);
+            if (go == null)
+            {
+                go = new GameObject(sp.name);
+                if (parent != null) go.transform.SetParent(parent, false);
+                Undo.RegisterCreatedObjectUndo(go, "Create " + sp.name);
+                created++;
+            }
+            else
+            {
+                Undo.RecordObject(go.transform, "Reposition " + sp.name);
+                updated++;
+            }
+            go.transform.position = sp.pos;
+            EditorUtility.SetDirty(go);
+        }
+
+        if (!Application.isPlaying) UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
+        Debug.Log($"[STOP IT] Spawn points repositioned at room entrances. Created {created}, updated {updated}. " +
+                  "Run 'Wire Scenarios' next to refresh the ScenarioManager references.");
+    }
+
     [MenuItem("Tools/STOP IT/Wire Scenarios")]
     public static void WireScenarios()
     {
@@ -215,59 +258,24 @@ public static class StopItBuildTools
         var configs = new ScenarioManager.ScenarioConfig[5];
 
         // 1. Living Room - fork in outlet
-        configs[0] = new ScenarioManager.ScenarioConfig
-        {
-            scenarioName = "Salon — La prise électrique",
-            actionHint = "ATTRAPE LE BÉBÉ !",
-            childSpawnPoint = FindTransform("SpawnChild_Salon"),
-            hazardZone = FindHazard("HazardZone_Outlet"),
-            playerSpawnPoint = FindTransform("SpawnPlayer_Salon"),
-            scenarioObjects = new GameObject[0]
-        };
+        configs[0] = BuildConfig("Salon — La prise électrique",       "ATTRAPE LE BÉBÉ !",
+                                 "SpawnChild_Salon",    "HazardZone_Outlet",          "SpawnPlayer_Salon");
 
         // 2. Kitchen - cat in microwave
-        configs[1] = new ScenarioManager.ScenarioConfig
-        {
-            scenarioName = "Cuisine — Le chat dans le micro-ondes",
-            actionHint = "ATTRAPE LE BÉBÉ AVANT LE CHAT !",
-            childSpawnPoint = FindTransform("SpawnChild_Kitchen"),
-            hazardZone = FindHazard("HazardZone_Microwave"),
-            playerSpawnPoint = FindTransform("SpawnPlayer_Kitchen"),
-            scenarioObjects = new GameObject[0]
-        };
+        configs[1] = BuildConfig("Cuisine — Le chat dans le micro-ondes", "ATTRAPE LE BÉBÉ AVANT LE CHAT !",
+                                 "SpawnChild_Kitchen",  "HazardZone_Microwave",       "SpawnPlayer_Kitchen");
 
         // 3. Bathroom - cleaning product
-        configs[2] = new ScenarioManager.ScenarioConfig
-        {
-            scenarioName = "Salle de bain — Le produit ménager",
-            actionHint = "BLOQUE-LE !",
-            childSpawnPoint = FindTransform("SpawnChild_Bathroom"),
-            hazardZone = FindHazard("HazardZone_CleaningProduct"),
-            playerSpawnPoint = FindTransform("SpawnPlayer_Bathroom"),
-            scenarioObjects = new GameObject[0]
-        };
+        configs[2] = BuildConfig("Salle de bain — Le produit ménager", "BLOQUE-LE !",
+                                 "SpawnChild_Bathroom", "HazardZone_CleaningProduct", "SpawnPlayer_Bathroom");
 
         // 4. Stairs - skateboard
-        configs[3] = new ScenarioManager.ScenarioConfig
-        {
-            scenarioName = "Escalier — Le skateboard",
-            actionHint = "RATTRAPE-LE !",
-            childSpawnPoint = FindTransform("SpawnChild_Stairs"),
-            hazardZone = FindHazard("HazardZone_StairsBottom"),
-            playerSpawnPoint = FindTransform("SpawnPlayer_Stairs"),
-            scenarioObjects = new GameObject[0]
-        };
+        configs[3] = BuildConfig("Escalier — Le skateboard",          "RATTRAPE-LE !",
+                                 "SpawnChild_Stairs",   "HazardZone_StairsBottom",    "SpawnPlayer_Stairs");
 
         // 5. Bedroom - climbing window ledge
-        configs[4] = new ScenarioManager.ScenarioConfig
-        {
-            scenarioName = "Chambre — Le rebord de fenêtre",
-            actionHint = "PORTE-LE LOIN DE LA FENÊTRE !",
-            childSpawnPoint = FindTransform("SpawnChild_Bedroom"),
-            hazardZone = FindHazard("HazardZone_Window"),
-            playerSpawnPoint = FindTransform("SpawnPlayer_Bedroom"),
-            scenarioObjects = new GameObject[0]
-        };
+        configs[4] = BuildConfig("Chambre — Le rebord de fenêtre",    "PORTE-LE LOIN DE LA FENÊTRE !",
+                                 "SpawnChild_Bedroom",  "HazardZone_Window",          "SpawnPlayer_Bedroom");
 
         sm.scenarios = configs;
         EditorUtility.SetDirty(sm);
@@ -280,7 +288,88 @@ public static class StopItBuildTools
         }
 
         if (!Application.isPlaying) UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
-        Debug.Log("[STOP IT] All 5 scenarios wired to ScenarioManager!");
+        Debug.Log("[STOP IT] All 5 scenarios wired to ScenarioManager! " +
+                  "If any warnings printed above, fix them and re-run (e.g. 'Reposition Spawns' or 'Build House').");
+    }
+
+    private static ScenarioManager.ScenarioConfig BuildConfig(
+        string scenarioName, string hint,
+        string childSpawnName, string hazardName, string playerSpawnName)
+    {
+        var childSpawn  = FindTransform(childSpawnName);
+        var hazard      = FindHazard(hazardName);
+        var playerSpawn = FindTransform(playerSpawnName);
+
+        if (childSpawn  == null) Debug.LogError($"[STOP IT] '{scenarioName}' — MISSING '{childSpawnName}'. NPC will spawn from previous scenario position.");
+        if (hazard      == null) Debug.LogError($"[STOP IT] '{scenarioName}' — MISSING HazardZone '{hazardName}'. NPC will keep walking toward the previous target (the salon outlet on first run).");
+        if (playerSpawn == null) Debug.LogWarning($"[STOP IT] '{scenarioName}' — missing '{playerSpawnName}'. Player will not be teleported (cosmetic).");
+
+        return new ScenarioManager.ScenarioConfig
+        {
+            scenarioName     = scenarioName,
+            actionHint       = hint,
+            childSpawnPoint  = childSpawn,
+            hazardZone       = hazard,
+            playerSpawnPoint = playerSpawn,
+            scenarioObjects  = new GameObject[0]
+        };
+    }
+
+    [MenuItem("Tools/STOP IT/Diagnose Scenarios")]
+    public static void DiagnoseScenarios()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("[STOP IT] === Scenario diagnostic ===");
+
+        // 1. Inventory of HazardZones in the scene
+        var hazards = Object.FindObjectsByType<HazardZone>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        sb.AppendLine($"\nHazardZone components in scene ({hazards.Length}):");
+        foreach (var h in hazards)
+            sb.AppendLine($"  • GO='{h.gameObject.name}'  hazardName='{h.hazardName}'  pos={h.transform.position}");
+
+        // 2. Inventory of spawn-named GameObjects
+        sb.AppendLine($"\nSpawn-point GameObjects (by name match):");
+        foreach (var sp in HouseBuilder.SpawnDefinitions())
+        {
+            var go = GameObject.Find(sp.name);
+            if (go != null) sb.AppendLine($"  ✓ '{sp.name}' found at {go.transform.position}");
+            else            sb.AppendLine($"  ✗ '{sp.name}' MISSING (expected at {sp.pos})");
+        }
+
+        // 3. Current ScenarioManager wiring
+        var sm = Object.FindAnyObjectByType<ScenarioManager>();
+        if (sm == null)
+        {
+            sb.AppendLine("\n[ERROR] No ScenarioManager in scene.");
+        }
+        else if (sm.scenarios == null || sm.scenarios.Length == 0)
+        {
+            sb.AppendLine("\n[ERROR] ScenarioManager.scenarios is empty — run 'Wire Scenarios'.");
+        }
+        else
+        {
+            sb.AppendLine($"\nScenarioManager.scenarios ({sm.scenarios.Length}):");
+            for (int i = 0; i < sm.scenarios.Length; i++)
+            {
+                var c = sm.scenarios[i];
+                string spawn  = c.childSpawnPoint  != null ? c.childSpawnPoint.gameObject.name  : "<NULL>";
+                string hazard = c.hazardZone       != null ? c.hazardZone.gameObject.name       : "<NULL>";
+                string player = c.playerSpawnPoint != null ? c.playerSpawnPoint.gameObject.name : "<null>";
+                string mark   = (c.hazardZone == null || c.childSpawnPoint == null) ? "✗" : "✓";
+                sb.AppendLine($"  {mark} [{i}] '{c.scenarioName}'  child={spawn}  hazard={hazard}  player={player}");
+            }
+        }
+
+        // 4. ChildNPC current state
+        var child = Object.FindAnyObjectByType<ChildNPC>();
+        if (child != null)
+        {
+            string th = child.targetHazard != null ? child.targetHazard.gameObject.name : "<NULL>";
+            sb.AppendLine($"\nChildNPC.targetHazard at edit time = {th}  (this is the FIRST scenario's hazard until runtime overrides it)");
+        }
+
+        sb.AppendLine("\nIf any line above starts with ✗, fix it (rename / re-create the missing GameObject) and re-run 'Setup All Scenarios'.");
+        Debug.Log(sb.ToString());
     }
 
     private static Transform FindTransform(string name)
