@@ -112,6 +112,10 @@ public class ScenarioManager : MonoBehaviour
         var config = scenarios[index];
         string label = string.IsNullOrEmpty(config.scenarioName) ? $"#{index}" : config.scenarioName;
 
+        Debug.Log($"[ScenarioManager] ActivateScenario({index}) — name='{label}' " +
+                  $"childSpawn={(config.childSpawnPoint!=null?config.childSpawnPoint.name:"<NULL>")} " +
+                  $"hazard={(config.hazardZone!=null?config.hazardZone.gameObject.name:"<NULL>")}", this);
+
         // Teleport child NPC
         if (childNPC != null && config.childSpawnPoint != null)
         {
@@ -146,6 +150,8 @@ public class ScenarioManager : MonoBehaviour
         if (childNPC != null && config.hazardZone != null)
         {
             childNPC.targetHazard = config.hazardZone;
+            Debug.Log($"[ScenarioManager] childNPC.targetHazard ← {config.hazardZone.gameObject.name} " +
+                      $"at {config.hazardZone.transform.position}", this);
         }
         else if (childNPC != null && config.hazardZone == null)
         {

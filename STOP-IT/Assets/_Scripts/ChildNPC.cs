@@ -299,6 +299,8 @@ public class ChildNPC : MonoBehaviour
         _agent.isStopped = false;
         _agent.SetDestination(_lastTargetPos);
         _isMoving = true;
+        Debug.Log($"[ChildNPC] Walking toward '{targetHazard.gameObject.name}' at {_lastTargetPos} " +
+                  $"(agent.isOnNavMesh={_agent.isOnNavMesh}, hasPath={_agent.hasPath}, pathStatus={_agent.pathStatus})", this);
     }
 
     private IEnumerator CartoonBounceAndFreeze()
