@@ -69,10 +69,21 @@ public class ScenarioManager : MonoBehaviour
         if (Instance == this) Instance = null;
     }
 
-    private void OnEnable()
+    // We register the GameManager listener in Start rather than OnEnable.
+    // Reason: this component has [DefaultExecutionOrder(-50)] so its Awake/OnEnable
+    // run BEFORE GameManager.Awake (ordre 0). At OnEnable time, GameManager.Instance
+    // is still null and the listener would silently never be added — which is
+    // exactly the bug that made every scenario behave like scenario 1 (the
+    // child kept the inspector-default targetHazard because ActivateScenario
+    // was never reached on state changes). Start always runs after every Awake
+    // in the scene, so Instance is guaranteed to be set here.
+    private void Start()
     {
         if (GameManager.Instance != null)
             GameManager.Instance.OnStateChanged.AddListener(OnStateChanged);
+        else
+            Debug.LogError("[ScenarioManager] GameManager.Instance is null at Start — " +
+                           "state events will not reach this manager. Check scene setup.", this);
     }
 
     private void OnDisable()
