@@ -58,6 +58,7 @@ public static class HouseBuilder
         Kitchen(house);
         Bathroom(house);
         Bedroom(house);
+        UnusedRoom(house);
 
         // ══════════ CEILING ══════════
         // Left side ceiling (salon + sdb have no second floor above)
@@ -103,8 +104,11 @@ public static class HouseBuilder
         // Full-height exterior (H2=6 to cover both floors)
         // North (Z=6)
         Box(p, "Ext_N", new Vector3(0, H2 / 2, 6), new Vector3(14 + W, H2, W));
-        // South (Z=-6)
-        Box(p, "Ext_S", new Vector3(0, H2 / 2, -6), new Vector3(14 + W, H2, W));
+        // South (Z=-6) — windowed for scenario 6 pigeon room (opening: X 0.7..2.3, Y 3.8..5.0)
+        Box(p, "Ext_S_Base",  new Vector3(0f,     1.9f, -6f), new Vector3(14 + W, 3.8f, W));
+        Box(p, "Ext_S_WinL",  new Vector3(-3.15f, 4.4f, -6f), new Vector3(7.7f,   1.2f, W));
+        Box(p, "Ext_S_WinR",  new Vector3( 4.65f, 4.4f, -6f), new Vector3(4.7f,   1.2f, W));
+        Box(p, "Ext_S_Top",   new Vector3(0f,     5.5f, -6f), new Vector3(14 + W, 1.0f, W));
         // West (X=-7)
         Box(p, "Ext_W", new Vector3(-7, H2 / 2, 0), new Vector3(W, H2, 12 + W));
 
@@ -292,6 +296,34 @@ public static class HouseBuilder
         HZ(r, "HazardZone_Window", new Vector3(6.85f, 4.1f, 0), new Vector3(0.4f, 0.3f, 2f), "Rebord de fenetre");
     }
 
+    // ─── ROOM 6: PIÈCE PIGEON (first floor, back-left, X:0..3.5, Z:-6..-1) ─
+    // South window opens onto the pigeon perched outside (scenario 6).
+    static void UnusedRoom(GameObject p)
+    {
+        var r = Room(p, "Room_PigeonRoom");
+
+        // Small cot against west wall
+        Obj(r, "Cot",            PrimitiveType.Cube,   new Vector3(0.8f,  H + 0.25f, -4.5f), new Vector3(0.9f, 0.5f, 1.5f),  "Mat_Furniture");
+        // Night table beside bed
+        Obj(r, "NightTable_P6",  PrimitiveType.Cube,   new Vector3(1.9f,  H + 0.40f, -4.5f), new Vector3(0.4f, 0.8f, 0.4f),  "Mat_Furniture");
+        // Toy box near north opening
+        Obj(r, "ToyBox_P6",      PrimitiveType.Cube,   new Vector3(0.7f,  H + 0.25f, -2.5f), new Vector3(0.6f, 0.5f, 0.6f),  "Mat_Furniture");
+        // Window ledge on interior face of south wall (interior Z ≈ -5.93)
+        Obj(r, "WindowLedge_P6", PrimitiveType.Cube,   new Vector3(1.5f,  H + 0.77f, -5.93f), new Vector3(1.8f, 0.05f, 0.3f), "Mat_Furniture");
+        // Window panel (visual that rotates open when child "opens" the window).
+        // The WindowOpener script references this transform.
+        var panel = Obj(r, "WindowPanel_P6", PrimitiveType.Cube,
+                        new Vector3(1.5f, H + 1.1f, -5.93f), new Vector3(1.5f, 1.1f, 0.06f), "Mat_Furniture");
+        // Pigeon perched just outside south window
+        Obj(r, "Pigeon_P6",      PrimitiveType.Sphere, new Vector3(1.5f,  H + 1.30f, -6.3f), new Vector3(0.2f, 0.2f, 0.2f),  "Mat_Wall");
+        // Hazard: window ledge the child climbs onto
+        HZ(r, "HazardZone_PigeonWindow", new Vector3(1.5f, H + 1.0f, -5.85f), new Vector3(1.6f, 0.6f, 0.4f), "Fenetre pigeon");
+
+        // WindowOpener trigger zone — child enters it, pauses to "open" the window, then resumes.
+        // Placed in front of the window so the child walks through it on the way to HazardZone_PigeonWindow.
+        WinOpener(r, "WindowOpener_P6", new Vector3(1.5f, H + 0.5f, -5.2f), 0.8f, panel);
+    }
+
     // ─── SPAWN POINTS ──────────────────────────────────────────────────
     // Each child spawn is placed AT THE ROOM'S ENTRANCE so the NPC walks
     // a different path per scenario, ending at that room's hazard.
@@ -329,7 +361,26 @@ public static class HouseBuilder
         // Bedroom (1F): child arrives at top-of-stairs landing, walks east toward window ledge at (6.85, 4.1, 0)
         ("SpawnChild_Bedroom",   new Vector3( 4f,    H, -0.5f)),
         ("SpawnPlayer_Bedroom",  new Vector3( 5.5f,  H,  0f)),
+
+        // Pigeon room (1F): child deep in room — walks to window, opens it (~8 s), then leans out.
+        // Player spawns at staircase base (ground floor) and must run upstairs in time.
+        ("SpawnChild_PigeonRoom",  new Vector3(0.8f,  H,  -2.5f)),
+        ("SpawnPlayer_PigeonRoom", new Vector3(4.5f,  0f, -2.0f)),
     };
+
+    // ─── WindowOpener trigger ──────────────────────────────────────────────
+    static void WinOpener(GameObject p, string n, Vector3 pos, float radius, GameObject panel)
+    {
+        var go = new GameObject(n);
+        go.transform.SetParent(p.transform, false);
+        go.transform.position = pos;
+        var sc = go.AddComponent<SphereCollider>();
+        sc.radius = radius;
+        sc.isTrigger = true;
+        var wo = go.AddComponent<WindowOpener>();
+        if (panel != null) wo.windowPanel = panel.transform;
+        Undo.RegisterCreatedObjectUndo(go, n);
+    }
 
     // ═══ HELPERS ═══════════════════════════════════════════════════════
     static GameObject Room(GameObject p, string n)

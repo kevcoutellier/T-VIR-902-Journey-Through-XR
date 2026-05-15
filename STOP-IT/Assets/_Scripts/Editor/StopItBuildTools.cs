@@ -202,11 +202,11 @@ public static class StopItBuildTools
     [MenuItem("Tools/STOP IT/Setup All Scenarios")]
     public static void SetupAllScenarios()
     {
-        Debug.Log("[STOP IT] Setup All Scenarios — running Reposition Spawns → Bake NavMesh → Wire Scenarios.");
-        RepositionSpawns();
+        Debug.Log("[STOP IT] Setup All Scenarios — Setup Scenario 6 → Reposition Spawns → Bake NavMesh → Wire Scenarios.");
+        SetupScenario6();   // creates Room_PigeonRoom + window + spawns + wires (includes WireScenarios)
+        RepositionSpawns(); // canonical positions for ALL spawn points (including pigeon room)
         BakeNavMesh();
-        WireScenarios();
-        Debug.Log("[STOP IT] Setup All Scenarios — done. Read warnings (if any) above and Play to verify each room has its own NPC path.");
+        Debug.Log("[STOP IT] Setup All Scenarios — done. Read warnings (if any) above and Play to verify.");
     }
 
     [MenuItem("Tools/STOP IT/Reposition Spawns")]
@@ -254,8 +254,8 @@ public static class StopItBuildTools
         sm.childNPC = childNPC;
         sm.scenarioUI = scenarioUI;
 
-        // Define all 5 scenarios
-        var configs = new ScenarioManager.ScenarioConfig[5];
+        // Define all 6 scenarios
+        var configs = new ScenarioManager.ScenarioConfig[6];
 
         // 1. Living Room - fork in outlet
         configs[0] = BuildConfig("Salon — La prise électrique",       "ATTRAPE LE BÉBÉ !",
@@ -273,9 +273,13 @@ public static class StopItBuildTools
         configs[3] = BuildConfig("Escalier — Le skateboard",          "RATTRAPE-LE !",
                                  "SpawnChild_Stairs",   "HazardZone_StairsBottom",    "SpawnPlayer_Stairs");
 
-        // 5. Bedroom - climbing window ledge
+        // 5. Bedroom - climbing east window ledge
         configs[4] = BuildConfig("Chambre — Le rebord de fenêtre",    "PORTE-LE LOIN DE LA FENÊTRE !",
                                  "SpawnChild_Bedroom",  "HazardZone_Window",          "SpawnPlayer_Bedroom");
+
+        // 6. Pigeon room - child climbs south window to catch pigeon
+        configs[5] = BuildConfig("Attraper le pigeon — La fenêtre du sud", "ATTRAPE-LE AVANT QU'IL TOMBE !",
+                                 "SpawnChild_PigeonRoom", "HazardZone_PigeonWindow",  "SpawnPlayer_PigeonRoom");
 
         sm.scenarios = configs;
         EditorUtility.SetDirty(sm);
@@ -388,6 +392,163 @@ public static class StopItBuildTools
     {
         var go = GameObject.Find(roomName);
         return go != null ? new GameObject[] { go } : new GameObject[0];
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Scenario 6 — pigeon room setup (works on top of an existing scene)
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// One-click setup for scenario 6 on an existing scene.
+    /// 1. Replaces the solid south wall (Ext_S) with a windowed version.
+    /// 2. Creates Room_PigeonRoom with furniture + pigeon + HazardZone.
+    /// 3. Creates spawn points.
+    /// 4. Runs WireScenarios (adds scenario 6 to ScenarioManager).
+    /// 5. Sets GameManager.totalScenarios = 6.
+    /// After running, execute "Bake NavMesh" to update the navmesh.
+    /// </summary>
+    public static void SetupScenario6()
+    {
+        var house = GameObject.Find("House");
+        Transform houseT = house != null ? house.transform : null;
+
+        // 1. South wall: replace solid Ext_S with windowed version if needed
+        var extS = GameObject.Find("Ext_S");
+        bool alreadyWindowed = GameObject.Find("Ext_S_Base") != null;
+
+        if (extS != null && !alreadyWindowed)
+        {
+            Undo.DestroyObjectImmediate(extS);
+            // Window opening: X 0.7..2.3, Y 3.8..5.0, Z -6
+            S6Wall(houseT, "Ext_S_Base",  new Vector3(0f,     1.9f, -6f), new Vector3(14.15f, 3.8f, 0.15f));
+            S6Wall(houseT, "Ext_S_WinL",  new Vector3(-3.15f, 4.4f, -6f), new Vector3( 7.7f,  1.2f, 0.15f));
+            S6Wall(houseT, "Ext_S_WinR",  new Vector3( 4.65f, 4.4f, -6f), new Vector3( 4.7f,  1.2f, 0.15f));
+            S6Wall(houseT, "Ext_S_Top",   new Vector3(0f,     5.5f, -6f), new Vector3(14.15f, 1.0f, 0.15f));
+            Debug.Log("[STOP IT] South wall replaced with windowed version (opening X:0.7..2.3, Y:3.8..5.0).");
+        }
+        else if (!alreadyWindowed)
+        {
+            Debug.LogWarning("[STOP IT] 'Ext_S' not found. If your scene has a custom south wall, " +
+                             "manually add a window opening at X: 0.7..2.3, Y: 3.8..5.0, Z: -6.");
+        }
+
+        // 2. Create/replace Room_PigeonRoom
+        var existing = GameObject.Find("Room_PigeonRoom");
+        if (existing != null) Undo.DestroyObjectImmediate(existing);
+
+        var r = new GameObject("Room_PigeonRoom");
+        r.isStatic = true;
+        if (houseT != null) r.transform.SetParent(houseT, false);
+        Undo.RegisterCreatedObjectUndo(r, "Room_PigeonRoom");
+
+        S6Obj(r, "Cot",            PrimitiveType.Cube,   new Vector3(0.8f,  3.25f, -4.5f),  new Vector3(0.9f,  0.5f,  1.5f),  "Mat_Furniture");
+        S6Obj(r, "NightTable_P6",  PrimitiveType.Cube,   new Vector3(1.9f,  3.40f, -4.5f),  new Vector3(0.4f,  0.8f,  0.4f),  "Mat_Furniture");
+        S6Obj(r, "ToyBox_P6",      PrimitiveType.Cube,   new Vector3(0.7f,  3.25f, -2.5f),  new Vector3(0.6f,  0.5f,  0.6f),  "Mat_Furniture");
+        S6Obj(r, "WindowLedge_P6", PrimitiveType.Cube,   new Vector3(1.5f,  3.77f, -5.93f), new Vector3(1.8f,  0.05f, 0.3f),  "Mat_Furniture");
+
+        // Window panel — rotated by WindowOpener when child "opens" it
+        var panelGO = S6ObjRef(r, "WindowPanel_P6", PrimitiveType.Cube,
+                               new Vector3(1.5f, 4.1f, -5.93f), new Vector3(1.5f, 1.1f, 0.06f), "Mat_Furniture");
+
+        S6Obj(r, "Pigeon_P6",      PrimitiveType.Sphere, new Vector3(1.5f,  4.30f, -6.3f),  new Vector3(0.2f,  0.2f,  0.2f),  "Mat_Wall");
+
+        // Hazard zone at the south window (child falls out after opening)
+        var hzGO = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        hzGO.name = "HazardZone_PigeonWindow";
+        hzGO.transform.SetParent(r.transform, false);
+        hzGO.transform.position   = new Vector3(1.5f, 4.0f, -5.85f);
+        hzGO.transform.localScale = new Vector3(1.6f, 0.6f, 0.4f);
+        hzGO.isStatic = false;
+        S6SetMat(hzGO, "Mat_Hazard");
+        var hzCol = hzGO.GetComponent<BoxCollider>();
+        if (hzCol) hzCol.isTrigger = true;
+        var hz = hzGO.AddComponent<HazardZone>();
+        hz.hazardName     = "Fenetre pigeon";
+        hz.warningRadius  = 2f;
+        hz.hazardRenderer = hzGO.GetComponent<Renderer>();
+        Undo.RegisterCreatedObjectUndo(hzGO, "HazardZone_PigeonWindow");
+
+        // WindowOpener trigger — child walks through it, stops to "open" the window (~8 s grace),
+        // then resumes toward HazardZone_PigeonWindow. Player spawns downstairs and must run up in time.
+        var woGO = new GameObject("WindowOpener_P6");
+        woGO.transform.SetParent(r.transform, false);
+        woGO.transform.position = new Vector3(1.5f, 3.5f, -5.2f);
+        var woSphere = woGO.AddComponent<SphereCollider>();
+        woSphere.radius   = 0.8f;
+        woSphere.isTrigger = true;
+        var wo = woGO.AddComponent<WindowOpener>();
+        wo.windowPanel   = panelGO != null ? panelGO.transform : null;
+        wo.openDuration  = 10f;
+        wo.openAngleDeg  = 80f;
+        Undo.RegisterCreatedObjectUndo(woGO, "WindowOpener_P6");
+
+        // 3. Spawn points: child deep in the pigeon room, player at the base of the staircase (Y=0)
+        S6Spawn(houseT, "SpawnChild_PigeonRoom",  new Vector3(0.8f,  3f, -2.5f));
+        S6Spawn(houseT, "SpawnPlayer_PigeonRoom", new Vector3(4.5f,  0f, -2.0f));
+
+        // 4. Wire all 6 scenarios into ScenarioManager
+        WireScenarios();
+
+        // 5. Set GameManager.totalScenarios = 6
+        var gm = Object.FindAnyObjectByType<GameManager>();
+        if (gm != null && gm.totalScenarios < 6)
+        {
+            Undo.RecordObject(gm, "Set totalScenarios 6");
+            gm.totalScenarios = 6;
+            EditorUtility.SetDirty(gm);
+            Debug.Log("[STOP IT] GameManager.totalScenarios set to 6.");
+        }
+
+        if (!Application.isPlaying) UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
+        Debug.Log("[STOP IT] Scenario 6 ready! Run 'Bake NavMesh' next to update navigation.");
+    }
+
+    // ── Helpers for SetupScenario6 ────────────────────────────────────────
+
+    private static void S6Wall(Transform parent, string name, Vector3 pos, Vector3 scale)
+    {
+        var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        go.name = name;
+        if (parent != null) go.transform.SetParent(parent, false);
+        go.transform.position   = pos;
+        go.transform.localScale = scale;
+        go.isStatic = true;
+        S6SetMat(go, "Mat_Wall");
+        Undo.RegisterCreatedObjectUndo(go, name);
+    }
+
+    private static void S6Obj(GameObject parent, string name, PrimitiveType type, Vector3 pos, Vector3 scale, string mat)
+        => S6ObjRef(parent, name, type, pos, scale, mat);
+
+    private static GameObject S6ObjRef(GameObject parent, string name, PrimitiveType type, Vector3 pos, Vector3 scale, string mat)
+    {
+        var go = GameObject.CreatePrimitive(type);
+        go.name = name;
+        go.transform.SetParent(parent.transform, false);
+        go.transform.position   = pos;
+        go.transform.localScale = scale;
+        go.isStatic = true;
+        S6SetMat(go, mat);
+        Undo.RegisterCreatedObjectUndo(go, name);
+        return go;
+    }
+
+    private static void S6Spawn(Transform parent, string name, Vector3 pos)
+    {
+        var existing = GameObject.Find(name);
+        if (existing != null) Undo.DestroyObjectImmediate(existing);
+        var go = new GameObject(name);
+        if (parent != null) go.transform.SetParent(parent, false);
+        go.transform.position = pos;
+        Undo.RegisterCreatedObjectUndo(go, name);
+    }
+
+    private static void S6SetMat(GameObject go, string matName)
+    {
+        var guids = AssetDatabase.FindAssets(matName + " t:Material");
+        if (guids.Length == 0) return;
+        var mat = AssetDatabase.LoadAssetAtPath<Material>(AssetDatabase.GUIDToAssetPath(guids[0]));
+        if (mat != null) { var r = go.GetComponent<Renderer>(); if (r) r.sharedMaterial = mat; }
     }
 
     [MenuItem("Tools/STOP IT/Spawn Floor Obstacles")]
