@@ -15,6 +15,10 @@ using Unity.XR.CoreUtils;
 /// - Head tracking   : HMD position + rotation → Camera TrackedPoseDriver
 /// - Left joystick   : Move player (XRI Left Locomotion > Move)
 /// - Right joystick  : Disabled (VR headset handles view rotation)
+/// - 4 triggers held : Grab child / take cat / close window / pickup-drop bottle.
+///                     Squeeze BOTH index triggers + BOTH grips together; release any to drop.
+/// - A / X buttons   : Unused for grab (the grab no longer uses face buttons).
+/// - Y (left Touch)  : Toggle scenario menu
 /// - Controllers     : Tracked for hand presence + interaction
 /// </summary>
 [DefaultExecutionOrder(-100)]
@@ -41,13 +45,24 @@ public class XRLocomotionBinder : MonoBehaviour
     [Tooltip("Layers considered as walls / static obstacles")]
     public LayerMask wallMask = ~0;
 
+    [Header("VR Grab")]
+    [Tooltip("Sphere radius (m) around each hand used to detect the child NPC. Bigger = more forgiving (don't have to hug the kid). ChildGrabber default is 0.30; we bump it for VR because pushing a tracked hand right onto a moving toddler is finicky.")]
+    [Range(0.1f, 1.0f)] public float vrGrabRadius = 0.50f;
+
     // Internal state
     private XROrigin  _xrOrigin;
     private Transform _cameraTransform;
     private InputAction _moveAction;
     private InputAction _menuToggleAction; // Y button or Menu button
+    // The 4 "triggers" that must be held TOGETHER to grab: index trigger + grip on
+    // BOTH hands. Holding all 4 grabs the baby (or takes the cat / closes the window
+    // / picks up the bottle); releasing any one drops it. Replaces the old A/X grab.
+    private InputAction _leftTriggerAction;
     private InputAction _leftGripAction;
+    private InputAction _rightTriggerAction;
     private InputAction _rightGripAction;
+    private bool _fourGrabActive;
+    private ChildGrabber _activeGrabber;
     private ChildGrabber _leftGrabber;
     private ChildGrabber _rightGrabber;
 
@@ -144,22 +159,22 @@ public class XRLocomotionBinder : MonoBehaviour
             Debug.Log($"[XRLocomotionBinder] Menu toggle action bound: '{_menuToggleAction.actionMap.name} > {_menuToggleAction.name}'");
         }
 
-        // ── Grip → child grab (one-shot save) ─────────────────────
+        // ── Grab → hold ALL 4 triggers together (index trigger + grip, both hands) ──
+        // Per design: the baby (and the cat / window / bottle verbs) are grabbed by
+        // squeezing all four triggers at once, and dropped when you let go. The old
+        // A / X face buttons are intentionally NOT bound to grab anymore.
+        // Bound directly to controller paths (rig-agnostic). We POLL the 4 in Update()
+        // rather than using per-action callbacks because "all held" is a conjunction
+        // across 4 controls, not a single button event.
         ResolveGrabbers();
-        _leftGripAction  = ResolveGripAction("XRI Left");
-        _rightGripAction = ResolveGripAction("XRI Right");
-        if (_leftGripAction != null)
-        {
-            _leftGripAction.Enable();
-            _leftGripAction.performed += OnLeftGrab;
-            _leftGripAction.canceled  += OnLeftRelease;
-        }
-        if (_rightGripAction != null)
-        {
-            _rightGripAction.Enable();
-            _rightGripAction.performed += OnRightGrab;
-            _rightGripAction.canceled  += OnRightRelease;
-        }
+        _leftTriggerAction  = BuildHoldAction("LeftHand",  isGrip: false);
+        _leftGripAction     = BuildHoldAction("LeftHand",  isGrip: true);
+        _rightTriggerAction = BuildHoldAction("RightHand", isGrip: false);
+        _rightGripAction    = BuildHoldAction("RightHand", isGrip: true);
+        _leftTriggerAction.Enable();
+        _leftGripAction.Enable();
+        _rightTriggerAction.Enable();
+        _rightGripAction.Enable();
 
         Debug.Log("[XRLocomotionBinder] Initialised successfully.");
     }
@@ -168,16 +183,18 @@ public class XRLocomotionBinder : MonoBehaviour
     {
         if (_menuToggleAction != null)
             _menuToggleAction.performed -= OnMenuToggle;
-        if (_leftGripAction != null)
-        {
-            _leftGripAction.performed -= OnLeftGrab;
-            _leftGripAction.canceled  -= OnLeftRelease;
-        }
-        if (_rightGripAction != null)
-        {
-            _rightGripAction.performed -= OnRightGrab;
-            _rightGripAction.canceled  -= OnRightRelease;
-        }
+        DisposeAction(ref _leftTriggerAction);
+        DisposeAction(ref _leftGripAction);
+        DisposeAction(ref _rightTriggerAction);
+        DisposeAction(ref _rightGripAction);
+    }
+
+    private static void DisposeAction(ref InputAction action)
+    {
+        if (action == null) return;
+        action.Disable();
+        action.Dispose();
+        action = null;
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -197,6 +214,53 @@ public class XRLocomotionBinder : MonoBehaviour
             else if (_leftGrabber == null)   _leftGrabber  = g; // fallback
             else                             _rightGrabber = g;
         }
+
+        // Fallback: the main scene only ships PlayerBlocker on each hand, no
+        // ChildGrabber. Without this, the 4-trigger grab in VR would fire into a
+        // null grabber and "nothing happens". Auto-attach a grabber to each
+        // controller transform on first run.
+        if (_leftGrabber == null)  _leftGrabber  = EnsureGrabberOnController("Left Controller");
+        if (_rightGrabber == null) _rightGrabber = EnsureGrabberOnController("Right Controller");
+
+        Debug.Log($"[XRLocomotionBinder] Grabbers — left: {(_leftGrabber != null ? _leftGrabber.gameObject.name : "<missing>")}, right: {(_rightGrabber != null ? _rightGrabber.gameObject.name : "<missing>")}");
+    }
+
+    /// <summary>
+    /// Find the controller transform under the XR Origin and add a ChildGrabber
+    /// to it if one is missing. Returns the resulting grabber (or null if the
+    /// controller transform itself can't be found).
+    /// </summary>
+    private ChildGrabber EnsureGrabberOnController(string controllerName)
+    {
+        if (_xrOrigin == null) return null;
+
+        var cameraOffset = _xrOrigin.CameraFloorOffsetObject;
+        Transform ctrl = cameraOffset != null
+            ? cameraOffset.transform.Find(controllerName)
+            : null;
+        if (ctrl == null) ctrl = transform.Find(controllerName);
+
+        // Last-ditch: search anywhere in the rig by name match.
+        if (ctrl == null)
+        {
+            foreach (var t in _xrOrigin.GetComponentsInChildren<Transform>(true))
+            {
+                if (t.name == controllerName) { ctrl = t; break; }
+            }
+        }
+
+        if (ctrl == null)
+        {
+            Debug.LogWarning($"[XRLocomotionBinder] Couldn't find '{controllerName}' under XR Origin — grab disabled for that hand.");
+            return null;
+        }
+
+        var grabber = ctrl.GetComponent<ChildGrabber>() ?? ctrl.gameObject.AddComponent<ChildGrabber>();
+        // VR-only override: enlarge the detection sphere so the player doesn't
+        // have to be glued to the toddler. Desktop rig sets its own radius on
+        // the temporary hand it spawns, so this doesn't affect that path.
+        grabber.grabRadius = vrGrabRadius;
+        return grabber;
     }
 
     private static string GetHierarchyPath(Transform t)
@@ -206,24 +270,81 @@ public class XRLocomotionBinder : MonoBehaviour
         return sb.ToString();
     }
 
-    private InputAction ResolveGripAction(string mapName)
+    /// <summary>
+    /// Build a Button InputAction for ONE of the 4 grab triggers — the index
+    /// trigger or the grip of the given hand. Several candidate bindings are added
+    /// so it resolves on the XRI Default asset whatever the exact control naming;
+    /// axis controls (trigger / grip) act as buttons via the default press point.
+    /// Unresolved paths are silently ignored by the Input System.
+    /// </summary>
+    private static InputAction BuildHoldAction(string hand, bool isGrip)
     {
-        var map = actionAsset.FindActionMap(mapName);
-        if (map == null) return null;
-        return map.FindAction("Select")
-            ?? map.FindAction("SelectAction")
-            ?? map.FindAction("Grip")
-            ?? map.FindAction("GripPressed");
+        var action = new InputAction($"{(isGrip ? "Grip" : "Trigger")}_{hand}", InputActionType.Button);
+        if (isGrip)
+        {
+            action.AddBinding($"<XRController>{{{hand}}}/gripPressed");
+            action.AddBinding($"<XRController>{{{hand}}}/{{GripButton}}");
+            action.AddBinding($"<XRController>{{{hand}}}/grip");        // axis as button
+        }
+        else
+        {
+            action.AddBinding($"<XRController>{{{hand}}}/triggerPressed");
+            action.AddBinding($"<XRController>{{{hand}}}/triggerButton");
+            action.AddBinding($"<XRController>{{{hand}}}/trigger");     // axis as button
+        }
+        return action;
     }
 
-    private void OnLeftGrab(InputAction.CallbackContext _)    { _leftGrabber?.Trigger(); }
-    private void OnLeftRelease(InputAction.CallbackContext _) { _leftGrabber?.Release(); }
-    private void OnRightGrab(InputAction.CallbackContext _)    { _rightGrabber?.Trigger(); }
-    private void OnRightRelease(InputAction.CallbackContext _) { _rightGrabber?.Release(); }
+    /// <summary>
+    /// Polls the 4 triggers each frame. ALL held → grab (rising edge); ANY released
+    /// → drop (falling edge). The baby attaches to whichever hand is closest to it;
+    /// scenario verbs (cat / window / bottle) are camera-based so the chosen hand
+    /// doesn't matter for them.
+    /// </summary>
+    private void UpdateFourTriggerGrab()
+    {
+        bool all = IsHeld(_leftTriggerAction)  && IsHeld(_leftGripAction)
+                && IsHeld(_rightTriggerAction) && IsHeld(_rightGripAction);
+
+        if (all && !_fourGrabActive)
+        {
+            _fourGrabActive = true;
+            _activeGrabber = ChooseGrabber();
+            Debug.Log($"[XRLocomotionBinder] 4-trigger grab fired — grabber={_activeGrabber}");
+            _activeGrabber?.Trigger();
+        }
+        else if (!all && _fourGrabActive)
+        {
+            _fourGrabActive = false;
+            // Release whichever hand might be holding the baby (idempotent if none).
+            _leftGrabber?.Release();
+            _rightGrabber?.Release();
+            _activeGrabber = null;
+        }
+    }
+
+    private static bool IsHeld(InputAction a) => a != null && a.IsPressed();
+
+    /// <summary>Pick the hand closest to the child for the baby grab; fall back to right.</summary>
+    private ChildGrabber ChooseGrabber()
+    {
+        var child = FindAnyObjectByType<ChildNPC>();
+        if (child != null && _leftGrabber != null && _rightGrabber != null)
+        {
+            float dl = (_leftGrabber.transform.position  - child.transform.position).sqrMagnitude;
+            float dr = (_rightGrabber.transform.position - child.transform.position).sqrMagnitude;
+            return dl <= dr ? _leftGrabber : _rightGrabber;
+        }
+        return _rightGrabber != null ? _rightGrabber : _leftGrabber;
+    }
 
     // ─────────────────────────────────────────────────────────────
     void Update()
     {
+        // Grab is independent of locomotion — poll the 4 triggers before the
+        // movement early-out (which bails when no move action is bound).
+        UpdateFourTriggerGrab();
+
         if (_moveAction == null || _xrOrigin == null || _cameraTransform == null) return;
 
         // Read left thumbstick

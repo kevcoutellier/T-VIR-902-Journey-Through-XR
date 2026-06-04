@@ -123,6 +123,20 @@ public class WindowOpener : MonoBehaviour
             child.ResumeWalk();
     }
 
+    // ── Public API ───────────────────────────────────────────────────────────
+    /// <summary>
+    /// Called by <see cref="WindowCloser"/> when the player slams the window shut.
+    /// Aborts any in-progress opening animation, snaps the panel back to closed,
+    /// and latches so the child can't (re-)open it for the rest of the round.
+    /// </summary>
+    public void CloseNow()
+    {
+        _triggered = true;            // latch: Update() won't re-start the open sequence
+        StopAllCoroutines();          // kill OpenSequence so it stops rotating / won't ResumeWalk
+        if (windowPanel != null)
+            windowPanel.localRotation = _panelClosedRot;
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────
     private void ResetWindow()
     {

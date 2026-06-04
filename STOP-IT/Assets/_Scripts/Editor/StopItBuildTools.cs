@@ -773,6 +773,155 @@ public static class StopItBuildTools
         Debug.Log($"[STOP IT] Scenario extras applied — {updates} configs updated, grabRadius set on {handCount} hand(s).");
     }
 
+    [MenuItem("Tools/STOP IT/Setup Cat & Window Actions")]
+    public static void SetupCatAndWindowActions()
+    {
+        // Wires the two scenarios whose win condition changed from "grab the baby"
+        // to a scenario-specific verb:
+        //   • Cat scenario (Kitchen) → take the cat out of the toddler's hands (CatGrab).
+        //   • Window scenario        → build an openable window + slam it shut (WindowCloser).
+        // In both, the direct baby grab/touch is disabled (ChildNPC.canBeSavedDirectly via
+        // ScenarioConfig.disableDirectChildSave). Scenario indices are resolved dynamically
+        // (by carried item / hazard) so this works whatever the scenario count/order.
+        var sm = Object.FindAnyObjectByType<ScenarioManager>();
+        if (sm == null)
+        {
+            Debug.LogError("[STOP IT] ScenarioManager not found — run 'Setup All Scenarios' first.");
+            return;
+        }
+        if (sm.scenarios == null || sm.scenarios.Length < 2)
+        {
+            Debug.LogError("[STOP IT] ScenarioManager has too few scenarios — run 'Wire Scenarios' first.");
+            return;
+        }
+
+        int changes = 0;
+
+        // ── Cat scenario — take the cat ──────────────────────────────────────
+        var cat = GameObject.Find("Cat");
+        if (cat != null)
+        {
+            int catIdx = FindScenarioByCarriedItem(sm, cat);
+            if (catIdx < 0 && sm.scenarios.Length > 1) catIdx = 1; // sensible fallback (kitchen)
+            if (catIdx >= 0)
+            {
+                PrepareCarriable(cat); // unmark static + disable colliders so it can ride the NPC
+                if (sm.scenarios[catIdx].carriedItem == null)
+                {
+                    sm.scenarios[catIdx].carriedItem = cat;
+                    sm.scenarios[catIdx].carriedItemLocalPosition = new Vector3(0.7f, 0.2f, 0.5f);
+                }
+                sm.scenarios[catIdx].disableDirectChildSave = true;
+                sm.scenarios[catIdx].actionHint = "RÉCUPÈRE LE CHAT !";
+
+                var catGrab = cat.GetComponent<CatGrab>() ?? cat.AddComponent<CatGrab>();
+                catGrab.targetHazard = sm.scenarios[catIdx].hazardZone; // microwave (neutralised on win)
+                EditorUtility.SetDirty(cat);
+                Debug.Log($"[STOP IT] Cat — CatGrab attached; scenario index {catIdx} ('{sm.scenarios[catIdx].scenarioName}') direct save disabled.");
+                changes++;
+            }
+        }
+        else
+        {
+            Debug.LogWarning("[STOP IT] 'Cat' GameObject not found. Run 'Apply Scenario Extras' " +
+                             "(it finds/wires the Cat) or create a 'Cat' object, then retry.");
+        }
+
+        // ── Window scenario — build an openable window + close action ────────
+        var hazardGO = GameObject.Find("HazardZone_Window");
+        var hazard = hazardGO != null ? hazardGO.GetComponent<HazardZone>() : null;
+        if (hazard != null)
+        {
+            int winIdx = FindScenarioByHazard(sm, hazard);
+            if (winIdx >= 0)
+            {
+                var opener = BuildBedroomWindow(hazardGO);
+                if (opener != null)
+                {
+                    var closer = opener.GetComponent<WindowCloser>() ?? opener.gameObject.AddComponent<WindowCloser>();
+                    closer.targetHazard = hazard;   // arms this closer for the window scenario + neutralised on win
+                    sm.scenarios[winIdx].disableDirectChildSave = true;
+                    sm.scenarios[winIdx].actionHint = "FERME LA FENÊTRE !";
+                    EditorUtility.SetDirty(opener.gameObject);
+                    Debug.Log($"[STOP IT] Window — built openable window + WindowCloser; scenario index {winIdx} ('{sm.scenarios[winIdx].scenarioName}') direct save disabled.");
+                    changes++;
+                }
+            }
+            else Debug.LogWarning("[STOP IT] No scenario uses HazardZone_Window — window action skipped.");
+        }
+        else
+        {
+            Debug.LogWarning("[STOP IT] 'HazardZone_Window' not found — window action skipped.");
+        }
+
+        EditorUtility.SetDirty(sm);
+        if (!Application.isPlaying) UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
+        Debug.Log($"[STOP IT] Cat & Window actions setup — {changes} change(s). " +
+                  "Baby grab/touch disabled in those scenarios; player must take the cat / close the window. " +
+                  "Test in Play mode (desktop: E near the object; VR: hold the 4 triggers near it).");
+    }
+
+    private static int FindScenarioByCarriedItem(ScenarioManager sm, GameObject item)
+    {
+        for (int i = 0; i < sm.scenarios.Length; i++)
+            if (sm.scenarios[i] != null && sm.scenarios[i].carriedItem == item) return i;
+        return -1;
+    }
+
+    private static int FindScenarioByHazard(ScenarioManager sm, HazardZone hz)
+    {
+        for (int i = 0; i < sm.scenarios.Length; i++)
+            if (sm.scenarios[i] != null && sm.scenarios[i].hazardZone == hz) return i;
+        return -1;
+    }
+
+    /// <summary>
+    /// Builds (idempotently) the bedroom's openable window: a cosmetic panel in the
+    /// east-wall opening + a WindowOpener trigger on the child's approach path. The
+    /// child walks into the trigger, pauses to "open" the window (grace period), then
+    /// resumes toward HazardZone_Window — giving the player time to run up and close it.
+    /// Positions are derived from HazardZone_Window so they track the actual opening.
+    /// Returns the WindowOpener (host for WindowCloser too).
+    /// </summary>
+    private static WindowOpener BuildBedroomWindow(GameObject hazardGO)
+    {
+        Transform parent = hazardGO.transform.parent; // Room_Bedroom
+        Vector3 hz = hazardGO.transform.position;     // (6.917, 4.1, 2.722) — east wall, opening along Z
+
+        // Cosmetic openable panel, in the opening, a bit above the sill.
+        var existingPanel = GameObject.Find("WindowPanel_Bedroom");
+        if (existingPanel != null) Undo.DestroyObjectImmediate(existingPanel);
+        var panel = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        panel.name = "WindowPanel_Bedroom";
+        if (parent != null) panel.transform.SetParent(parent, false);
+        panel.transform.position   = new Vector3(hz.x, hz.y + 0.30f, hz.z);
+        panel.transform.rotation   = Quaternion.identity;
+        panel.transform.localScale = new Vector3(0.08f, 1.2f, 1.8f);
+        var pcol = panel.GetComponent<Collider>();
+        if (pcol != null) Object.DestroyImmediate(pcol); // cosmetic — must not block the player capsule
+        S6SetMat(panel, "Mat_Furniture");
+        Undo.RegisterCreatedObjectUndo(panel, "WindowPanel_Bedroom");
+
+        // Opener/closer host: a trigger sphere on the child's floor-level approach
+        // (~1 m inside the room from the window).
+        var existingOpener = GameObject.Find("WindowOpener_Bedroom");
+        if (existingOpener != null) Undo.DestroyObjectImmediate(existingOpener);
+        var woGO = new GameObject("WindowOpener_Bedroom");
+        if (parent != null) woGO.transform.SetParent(parent, false);
+        woGO.transform.position = new Vector3(hz.x - 1.0f, 3.0f, hz.z);
+        var sphere = woGO.AddComponent<SphereCollider>();
+        sphere.radius = 1.8f;
+        sphere.isTrigger = true;
+        var opener = woGO.AddComponent<WindowOpener>();
+        opener.windowPanel  = panel.transform;
+        opener.openDuration = 10f;
+        opener.openAngleDeg = 80f;
+        opener.triggerRadius = 1.8f;
+        Undo.RegisterCreatedObjectUndo(woGO, "WindowOpener_Bedroom");
+
+        return opener;
+    }
+
     /// <summary>
     /// Unmarks the GameObject as static (Static-batched renderers don't follow
     /// their transform at runtime) and disables its colliders, so it can be

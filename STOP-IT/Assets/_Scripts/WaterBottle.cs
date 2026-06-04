@@ -33,8 +33,9 @@ public class WaterBottle : MonoBehaviour
     public float interactionRadius = 1.5f;
 
     [Header("Prompts")]
-    public string pickupPromptText = "E pour récupérer l'eau";
-    public string swapPromptText = "E pour remplacer";
+    [Tooltip("Use {KEY} as a placeholder for the active input key (auto-substituted: 'E' on desktop, 'A' in VR).")]
+    public string pickupPromptText = "{KEY} pour récupérer l'eau";
+    public string swapPromptText = "{KEY} pour remplacer";
     [Tooltip("Local offset from the anchor (bottle / hazard zone) for the prompt.")]
     public Vector3 promptOffset = new Vector3(0f, 0.4f, 0f);
 
@@ -73,8 +74,10 @@ public class WaterBottle : MonoBehaviour
         }
         if (targetHazardZone != null)
             _hazardRenderers = targetHazardZone.GetComponentsInChildren<Renderer>(includeInactive: true);
-        _pickupPrompt = BuildPrompt("WaterBottle_PickupPrompt", pickupPromptText);
-        _swapPrompt = BuildPrompt("WaterBottle_SwapPrompt", swapPromptText);
+        // Substitute {KEY} for the active input label (shared with the cat / window
+        // prompts via InputHints): "E" on desktop, "Presse les 4 gâchettes" in VR.
+        _pickupPrompt = BuildPrompt("WaterBottle_PickupPrompt", InputHints.ResolvePrompt(pickupPromptText));
+        _swapPrompt   = BuildPrompt("WaterBottle_SwapPrompt",   InputHints.ResolvePrompt(swapPromptText));
 
         // Self-reset on every Playing state transition. This is the fail-safe path
         // in case the ScenarioManager config isn't wired to call ResetBottle:
@@ -101,14 +104,17 @@ public class WaterBottle : MonoBehaviour
         var canvas = go.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.WorldSpace;
         var rt = (RectTransform)go.transform;
-        rt.sizeDelta = new Vector2(400, 80);
+        // Wider/taller + word wrap so the longer VR label
+        // ("Presse les 4 gâchettes pour …") fits without clipping.
+        rt.sizeDelta = new Vector2(560, 160);
         rt.localScale = Vector3.one * 0.003f;
 
         var tmpGO = new GameObject("Text");
         tmpGO.transform.SetParent(go.transform, false);
         var tmp = tmpGO.AddComponent<TextMeshProUGUI>();
         tmp.text = text;
-        tmp.fontSize = 48;
+        tmp.fontSize = 40;
+        tmp.enableWordWrapping = true;
         tmp.alignment = TextAlignmentOptions.Center;
         tmp.color = new Color(0.2f, 0.95f, 1f);
         tmp.fontStyle = FontStyles.Bold;

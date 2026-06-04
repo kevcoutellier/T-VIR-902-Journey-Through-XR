@@ -42,6 +42,14 @@ public class ScenarioManager : MonoBehaviour
         public Vector3 carriedItemLocalPosition = new Vector3(0f, 0.2f, 0.5f);
         [Tooltip("Local Euler angles of the carried item relative to the NPC root.")]
         public Vector3 carriedItemLocalEuler;
+
+        [Tooltip("If true, the child can't be saved by grabbing/touching them this scenario — " +
+                 "the player must use the scenario verb instead (take the cat, close the window). " +
+                 "Left false on every existing scenario (grab/touch stays allowed); set true for " +
+                 "scenario 2 (cat) and scenario 5 (window). " +
+                 "NOTE: phrased as 'disable' so scenarios serialized before this field existed " +
+                 "deserialize to false = allowed.")]
+        public bool disableDirectChildSave = false;
     }
 
     [Header("References")]
@@ -185,6 +193,13 @@ public class ScenarioManager : MonoBehaviour
                 ? config.childStartDelayOverride
                 : _originalChildStartDelay;
         }
+
+        // Per-scenario save rule: cat / window scenarios forbid saving the child by
+        // directly grabbing or touching them — the player must use the scenario verb
+        // (CatGrab / WindowCloser). Gated at the source inside ChildNPC so it covers
+        // both ChildGrabber (grab) and PlayerBlocker (touch).
+        if (childNPC != null)
+            childNPC.canBeSavedDirectly = !config.disableDirectChildSave;
 
         // Set the child's target hazard
         if (childNPC != null && config.hazardZone != null)

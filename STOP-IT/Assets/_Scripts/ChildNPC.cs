@@ -59,6 +59,12 @@ public class ChildNPC : MonoBehaviour
     [Tooltip("Optional cosmetic skateboard mesh parented under the NPC. Toggled on for the stairs scenario only.")]
     public GameObject skateboardVisual;
 
+    [Header("Save rules")]
+    [Tooltip("If false, the child cannot be saved by directly grabbing OR touching them — the scenario " +
+             "must be solved another way (e.g. take the cat, close the window). Set per-scenario by " +
+             "ScenarioManager from ScenarioConfig.disableDirectChildSave.")]
+    public bool canBeSavedDirectly = true;
+
     // ── Runtime ────────────────────────────────────────────────────────────
     private NavMeshAgent _agent;
     private bool _isMoving = false;
@@ -252,6 +258,9 @@ public class ChildNPC : MonoBehaviour
     public void Intercept()
     {
         if (_isStopped) return;
+        // Some scenarios (cat, window) forbid saving the child by touch/grab —
+        // the player must solve them another way. Ignore the reflex slap there.
+        if (!canBeSavedDirectly) return;
         _isStopped = true;
         _isMoving = false;
         if (_agent != null && _agent.isActiveAndEnabled && _agent.isOnNavMesh)
@@ -266,10 +275,16 @@ public class ChildNPC : MonoBehaviour
     /// Called by ChildGrabber when the player grips near the child.
     /// One-shot: grabbing the baby IS the win — the scenario succeeds immediately,
     /// the baby is parented to the player's hand for a satisfying "saved them" beat.
+    /// Returns true if the grab actually took (false when grabbing is disabled for
+    /// the current scenario, or the child is already held/stopped) — the caller uses
+    /// this so it doesn't latch onto a child it isn't really holding.
     /// </summary>
-    public void Grab(Transform attachPoint)
+    public bool Grab(Transform attachPoint)
     {
-        if (_isStopped || _held || attachPoint == null) return;
+        if (_isStopped || _held || attachPoint == null) return false;
+        // Cat / window scenarios forbid the direct grab — force the player to use
+        // the scenario verb instead.
+        if (!canBeSavedDirectly) return false;
         _isStopped = true;
         _isMoving = false;
         _held = true;
@@ -301,6 +316,7 @@ public class ChildNPC : MonoBehaviour
             audioSource.PlayOneShot(caughtClip);
 
         GameManager.Instance?.ReportSuccess();
+        return true;
     }
 
     private Coroutine _heldSwayCoroutine;
