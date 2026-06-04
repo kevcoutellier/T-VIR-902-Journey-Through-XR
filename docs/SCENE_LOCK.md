@@ -1,8 +1,8 @@
 ---
-owner: Paulin
-since: 2026-06-04
-feature: Scénarios 2 & 5 — récupérer le chat / fermer la fenêtre + grab VR 4 gâchettes
-expected_release: 2026-06-04
+owner: FREE
+since: 
+feature: 
+expected_release: 
 ---
 
 # Verrou de la scène principale `LivingRoom.unity`
