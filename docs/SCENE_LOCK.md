@@ -1,8 +1,8 @@
 ---
-owner: Paulin
-since: 2026-06-04
-feature: Fenêtre coulissante déjà ouverte (scénario chambre) — rework WindowCloser
-expected_release: 2026-06-04
+owner: FREE
+since: 
+feature: 
+expected_release: 
 ---
 
 # Verrou de la scène principale `LivingRoom.unity`
