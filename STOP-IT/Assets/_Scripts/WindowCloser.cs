@@ -1,61 +1,74 @@
+using System.Collections;
 using UnityEngine;
 
 /// <summary>
-/// STOP IT! — WindowCloser (Scenario 5 — pigeon room / south window)
+/// STOP IT! — WindowCloser (bedroom window scenario)
 ///
-/// New win condition: instead of grabbing the baby, the player slams the window
-/// shut before the toddler can climb out after the pigeon. Pairs with the
-/// <see cref="WindowOpener"/> that the child uses to open the same window — attach
-/// this alongside it (same GameObject).
+/// New win condition: the window is ALREADY OPEN (the toddler climbs out after the
+/// pigeon). The player slams it shut — as a SLIDING pane — before the child escapes.
 ///
-/// • Arms only while the pigeon-window scenario is active (its hazard is the
-///   active scenario's hazard), so it's inert elsewhere.
-/// • While armed it shows a floating prompt once the player camera is within
-///   <see cref="interactionRadius"/> of the window panel.
+/// • Self-contained: drives a single sliding pane (no WindowOpener needed). The pane
+///   starts displaced by <see cref="openOffset"/> (open) and slides back to its
+///   authored pose (closed/covering) when the player closes it.
+/// • Arms only while the window scenario is active (its hazard is the active
+///   scenario's hazard), so it's inert elsewhere.
+/// • Shows a floating prompt once the player camera is within
+///   <see cref="interactionRadius"/> of the window opening.
 /// • The interact press (desktop "E" / VR the 4 triggers held together) is routed
 ///   here through IProximityInteractable: close the window → scenario won.
 ///
 /// Disabling the baby-grab is handled by ScenarioManager flipping
-/// ChildNPC.canBeSavedDirectly — this component only adds the new verb.
+/// ChildNPC.canBeSavedDirectly — this component only adds the close-window verb.
 /// </summary>
-[RequireComponent(typeof(WindowOpener))]
 public class WindowCloser : MonoBehaviour, IProximityInteractable
 {
-    [Header("Interaction")]
-    [Tooltip("Distance (metres) from the player camera at which the window can be closed.")]
-    public float interactionRadius = 2.5f;
+    [Header("Sliding pane")]
+    [Tooltip("The sliding pane transform. Authored at the CLOSED (covering) pose; starts the round OPEN (displaced by openOffset) and slides back to closed when the player closes it.")]
+    public Transform windowPanel;
+    [Tooltip("Local-space displacement of the pane in its OPEN position, relative to its authored closed pose. Default slides along the wall (local Z). Flip the sign / change axis to taste.")]
+    public Vector3 openOffset = new Vector3(0f, 0f, 1.8f);
+    [Tooltip("Slide animation duration in seconds.")]
+    public float slideDuration = 0.6f;
 
+    [Header("Interaction")]
+    [Tooltip("Distance (metres) from the player camera (measured to the window opening) at which the window can be closed.")]
+    public float interactionRadius = 2.5f;
     [Tooltip("Use {KEY} as a placeholder for the active input ('E' desktop / 'Presse les 4 gâchettes' VR).")]
     public string promptText = "{KEY} pour fermer la fenêtre";
-
-    [Tooltip("Local offset of the prompt relative to the window panel.")]
+    [Tooltip("Offset of the prompt relative to the window opening.")]
     public Vector3 promptOffset = new Vector3(0f, 0.5f, 0f);
 
     [Header("Success")]
     [Tooltip("Hazard that arms this closer (auto-found by name if null). Also neutralised on success.")]
     public HazardZone targetHazard;
     [Tooltip("Hazard GameObject name searched when targetHazard is null.")]
-    public string targetHazardName = "HazardZone_PigeonWindow";
+    public string targetHazardName = "HazardZone_Window";
 
     [Header("Testing")]
     [Tooltip("Sandbox helper: arm even when no ScenarioManager is present.")]
     public bool forceArmed = false;
 
-    private WindowOpener _opener;
-    private Transform _anchor;     // window panel (fallback: this transform)
     private bool _armed;
     private bool _closed;
+    private Vector3 _closedLocalPos;   // authored (covering) pose, in the pane's local space
+    private Vector3 _openingWorldPos;  // stable anchor at the opening (for prompt + proximity)
+    private bool _havePose;
     private GameObject _prompt;
+    private Coroutine _slide;
 
     public bool IsArmed => _armed && !_closed;
 
     private void Awake()
     {
-        _opener = GetComponent<WindowOpener>();
-        _anchor = (_opener != null && _opener.windowPanel != null) ? _opener.windowPanel : transform;
+        if (windowPanel != null)
+        {
+            _closedLocalPos = windowPanel.localPosition;
+            _openingWorldPos = windowPanel.position; // captured BEFORE we open it
+            _havePose = true;
+        }
     }
 
-    private void OnEnable()  => ProximityInteractables.Register(this);
+    private void OnEnable() => ProximityInteractables.Register(this);
     private void OnDisable()
     {
         ProximityInteractables.Unregister(this);
@@ -81,6 +94,8 @@ public class WindowCloser : MonoBehaviour, IProximityInteractable
             ScenarioManager.Instance.OnScenarioActivated.AddListener(OnScenarioActivated);
             OnScenarioActivated(ScenarioManager.Instance.CurrentScenario);
         }
+
+        SetOpen(); // window starts open
     }
 
     private void OnDestroy()
@@ -93,39 +108,52 @@ public class WindowCloser : MonoBehaviour, IProximityInteractable
 
     private void OnScenarioActivated(ScenarioManager.ScenarioConfig cfg)
     {
-        // Armed only for the scenario whose hazard is the pigeon window.
         _armed = forceArmed || (cfg != null && targetHazard != null && cfg.hazardZone == targetHazard);
     }
 
     private void OnGameStateChanged(GameManager.GameState state)
     {
         if (state == GameManager.GameState.Playing)
-            _closed = false; // new round — window starts closed, WindowOpener resets it
+        {
+            _closed = false;
+            SetOpen(); // new round — window is open again
+        }
         else if (_prompt != null)
+        {
             _prompt.SetActive(false);
+        }
+    }
+
+    /// <summary>Snap the pane to its OPEN (slid-aside) position instantly.</summary>
+    private void SetOpen()
+    {
+        if (_slide != null) { StopCoroutine(_slide); _slide = null; }
+        if (_havePose && windowPanel != null)
+            windowPanel.localPosition = _closedLocalPos + openOffset;
     }
 
     private void Update()
     {
-        if (_prompt == null || _anchor == null) return;
+        if (_prompt == null) return;
         var cam = Camera.main;
         if (cam == null) { _prompt.SetActive(false); return; }
 
         bool show = IsArmed
+                 && _havePose
                  && GameManager.Instance != null
                  && GameManager.Instance.State == GameManager.GameState.Playing
-                 && Vector3.Distance(cam.transform.position, _anchor.position) <= interactionRadius;
+                 && Vector3.Distance(cam.transform.position, _openingWorldPos) <= interactionRadius;
 
         _prompt.SetActive(show);
         if (show)
-            ProximityPrompt.Face(_prompt, _anchor.position + promptOffset, cam.transform.position);
+            ProximityPrompt.Face(_prompt, _openingWorldPos + promptOffset, cam.transform.position);
     }
 
     // ── IProximityInteractable ───────────────────────────────────────────────
     public bool TryInteract(Vector3 cameraPosition)
     {
-        if (!IsArmed || _anchor == null) return false;
-        if (Vector3.Distance(cameraPosition, _anchor.position) > interactionRadius) return false;
+        if (!IsArmed || !_havePose) return false;
+        if (Vector3.Distance(cameraPosition, _openingWorldPos) > interactionRadius) return false;
         CloseWindow();
         return true;
     }
@@ -135,23 +163,46 @@ public class WindowCloser : MonoBehaviour, IProximityInteractable
         _closed = true;
         if (_prompt != null) _prompt.SetActive(false);
 
-        // Stop the opening animation and snap the panel shut.
-        if (_opener != null) _opener.CloseNow();
+        // Slide the pane shut.
+        if (_slide != null) StopCoroutine(_slide);
+        if (windowPanel != null) _slide = StartCoroutine(SlideTo(_closedLocalPos));
 
         // Neutralise the ledge hazard so a same-frame arrival can't flash a fail,
         // then report the save (which also stops the child via the state change).
         if (targetHazard != null) targetHazard.MarkNeutralised();
 
-        Debug.Log("[WindowCloser] Window slammed shut — scenario won.", this);
+        Debug.Log("[WindowCloser] Window slid shut — scenario won.", this);
         GameManager.Instance?.ReportSuccess();
+    }
+
+    private IEnumerator SlideTo(Vector3 targetLocal)
+    {
+        if (windowPanel == null) yield break;
+        Vector3 start = windowPanel.localPosition;
+        float t = 0f;
+        while (t < slideDuration)
+        {
+            t += Time.deltaTime;
+            float u = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(t / slideDuration));
+            windowPanel.localPosition = Vector3.Lerp(start, targetLocal, u);
+            yield return null;
+        }
+        windowPanel.localPosition = targetLocal;
+        _slide = null;
     }
 
 #if UNITY_EDITOR
     private void OnDrawGizmosSelected()
     {
-        Transform a = (_opener != null && _opener.windowPanel != null) ? _opener.windowPanel : transform;
+        if (windowPanel == null) return;
         Gizmos.color = new Color(0.2f, 0.8f, 1f, 0.5f);
-        Gizmos.DrawWireSphere(a.position, interactionRadius);
+        Gizmos.DrawWireSphere(Application.isPlaying ? _openingWorldPos : windowPanel.position, interactionRadius);
+        // Show the open (slid) pose.
+        Gizmos.color = new Color(0.2f, 0.8f, 1f, 0.25f);
+        Vector3 openWorld = windowPanel.parent != null
+            ? windowPanel.parent.TransformPoint(windowPanel.localPosition + openOffset)
+            : windowPanel.localPosition + openOffset;
+        Gizmos.DrawWireCube(openWorld, windowPanel.lossyScale);
     }
 #endif
 }

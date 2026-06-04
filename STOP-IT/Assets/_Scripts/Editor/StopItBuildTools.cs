@@ -835,15 +835,13 @@ public static class StopItBuildTools
             int winIdx = FindScenarioByHazard(sm, hazard);
             if (winIdx >= 0)
             {
-                var opener = BuildBedroomWindow(hazardGO);
-                if (opener != null)
+                var closer = BuildBedroomWindow(hazardGO, hazard);
+                if (closer != null)
                 {
-                    var closer = opener.GetComponent<WindowCloser>() ?? opener.gameObject.AddComponent<WindowCloser>();
-                    closer.targetHazard = hazard;   // arms this closer for the window scenario + neutralised on win
                     sm.scenarios[winIdx].disableDirectChildSave = true;
                     sm.scenarios[winIdx].actionHint = "FERME LA FENÊTRE !";
-                    EditorUtility.SetDirty(opener.gameObject);
-                    Debug.Log($"[STOP IT] Window — built openable window + WindowCloser; scenario index {winIdx} ('{sm.scenarios[winIdx].scenarioName}') direct save disabled.");
+                    EditorUtility.SetDirty(closer.gameObject);
+                    Debug.Log($"[STOP IT] Window — built sliding window (already open) + WindowCloser; scenario index {winIdx} ('{sm.scenarios[winIdx].scenarioName}') direct save disabled.");
                     changes++;
                 }
             }
@@ -876,21 +874,26 @@ public static class StopItBuildTools
     }
 
     /// <summary>
-    /// Builds (idempotently) the bedroom's openable window: a cosmetic panel in the
-    /// east-wall opening + a WindowOpener trigger on the child's approach path. The
-    /// child walks into the trigger, pauses to "open" the window (grace period), then
-    /// resumes toward HazardZone_Window — giving the player time to run up and close it.
-    /// Positions are derived from HazardZone_Window so they track the actual opening.
-    /// Returns the WindowOpener (host for WindowCloser too).
+    /// Builds (idempotently) the bedroom's sliding window: a single cosmetic pane in
+    /// the east-wall opening, authored at its CLOSED (covering) pose, carrying a
+    /// WindowCloser. The window is ALREADY OPEN at runtime (the child climbs out the
+    /// open window — it does NOT open it) and the player slides it shut to win.
+    /// Position/size are derived from HazardZone_Window so they track the opening.
+    /// Returns the WindowCloser.
     /// </summary>
-    private static WindowOpener BuildBedroomWindow(GameObject hazardGO)
+    private static WindowCloser BuildBedroomWindow(GameObject hazardGO, HazardZone hazard)
     {
         Transform parent = hazardGO.transform.parent; // Room_Bedroom
         Vector3 hz = hazardGO.transform.position;     // (6.917, 4.1, 2.722) — east wall, opening along Z
 
-        // Cosmetic openable panel, in the opening, a bit above the sill.
+        // Clean up any previous build (the old hinged design also made a separate
+        // WindowOpener_Bedroom GameObject — remove it).
+        var oldOpener = GameObject.Find("WindowOpener_Bedroom");
+        if (oldOpener != null) Undo.DestroyObjectImmediate(oldOpener);
         var existingPanel = GameObject.Find("WindowPanel_Bedroom");
         if (existingPanel != null) Undo.DestroyObjectImmediate(existingPanel);
+
+        // Sliding pane, authored at the CLOSED (covering) pose, a bit above the sill.
         var panel = GameObject.CreatePrimitive(PrimitiveType.Cube);
         panel.name = "WindowPanel_Bedroom";
         if (parent != null) panel.transform.SetParent(parent, false);
@@ -902,24 +905,13 @@ public static class StopItBuildTools
         S6SetMat(panel, "Mat_Furniture");
         Undo.RegisterCreatedObjectUndo(panel, "WindowPanel_Bedroom");
 
-        // Opener/closer host: a trigger sphere on the child's floor-level approach
-        // (~1 m inside the room from the window).
-        var existingOpener = GameObject.Find("WindowOpener_Bedroom");
-        if (existingOpener != null) Undo.DestroyObjectImmediate(existingOpener);
-        var woGO = new GameObject("WindowOpener_Bedroom");
-        if (parent != null) woGO.transform.SetParent(parent, false);
-        woGO.transform.position = new Vector3(hz.x - 1.0f, 3.0f, hz.z);
-        var sphere = woGO.AddComponent<SphereCollider>();
-        sphere.radius = 1.8f;
-        sphere.isTrigger = true;
-        var opener = woGO.AddComponent<WindowOpener>();
-        opener.windowPanel  = panel.transform;
-        opener.openDuration = 10f;
-        opener.openAngleDeg = 80f;
-        opener.triggerRadius = 1.8f;
-        Undo.RegisterCreatedObjectUndo(woGO, "WindowOpener_Bedroom");
-
-        return opener;
+        // WindowCloser lives on the pane itself (no WindowOpener — window starts open).
+        var closer = panel.AddComponent<WindowCloser>();
+        closer.windowPanel = panel.transform;
+        closer.openOffset  = new Vector3(0f, 0f, 1.8f); // slide one pane-width along the wall (Z)
+        closer.targetHazard = hazard;
+        closer.targetHazardName = hazardGO.name;
+        return closer;
     }
 
     /// <summary>

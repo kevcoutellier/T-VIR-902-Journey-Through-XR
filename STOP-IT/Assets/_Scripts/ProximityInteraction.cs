@@ -105,7 +105,7 @@ public static class ProximityPrompt
         var tmp = tmpGO.AddComponent<TextMeshProUGUI>();
         tmp.text = text;
         tmp.fontSize = 40;
-        tmp.enableWordWrapping = true;
+        tmp.textWrappingMode = TextWrappingModes.Normal;
         tmp.alignment = TextAlignmentOptions.Center;
         tmp.color = new Color(0.2f, 0.95f, 1f);
         tmp.fontStyle = FontStyles.Bold;
