@@ -19,3 +19,6 @@ pdf_content.txt
 
 # Recovery scenes (sauvegardes transientes, pas source de vérité)
 STOP-IT/Assets/_Recovery/
+
+# Captures de rendu de l'outil ArtSkin (artefacts de dev, hors Assets)
+STOP-IT/ArtCaptures/

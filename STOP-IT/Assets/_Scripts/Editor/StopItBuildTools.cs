@@ -663,7 +663,7 @@ public static class StopItBuildTools
                 {
                     PrepareCarriable(fork);
                     sm.scenarios[0].carriedItem = fork;
-                    sm.scenarios[0].carriedItemLocalPosition = new Vector3(0.6f, 0.1f, 0.5f);
+                    sm.scenarios[0].carriedItemLocalPosition = new Vector3(0.12f, 0.48f, 0.22f); // dans la main du bébé debout
                     sm.scenarios[0].carriedItemLocalEuler    = new Vector3(0f, 0f, 0f);
                     Debug.Log("[STOP IT] config[0].carriedItem ← Fork");
                 }
@@ -678,7 +678,7 @@ public static class StopItBuildTools
                 {
                     PrepareCarriable(cat);
                     sm.scenarios[1].carriedItem = cat;
-                    sm.scenarios[1].carriedItemLocalPosition = new Vector3(0.7f, 0.2f, 0.5f);
+                    sm.scenarios[1].carriedItemLocalPosition = new Vector3(0f, 0.42f, 0.30f); // dans les mains du bébé (saisissable scénario 2)
                     sm.scenarios[1].carriedItemLocalEuler    = new Vector3(0f, 0f, 0f);
                     Debug.Log("[STOP IT] config[1].carriedItem ← Cat");
                 }
@@ -730,7 +730,7 @@ public static class StopItBuildTools
                 }
                 PrepareCarriable(skate);
                 sm.scenarios[3].carriedItem = skate;
-                sm.scenarios[3].carriedItemLocalPosition = new Vector3(0f, -1.0f, 0f);
+                sm.scenarios[3].carriedItemLocalPosition = new Vector3(0f, 0.03f, 0f); // sous les pieds du bébé debout
                 sm.scenarios[3].carriedItemLocalEuler    = new Vector3(0f, 0f, 0f);
                 Debug.Log("[STOP IT] config[3].carriedItem ← Skateboard");
                 updates++;
