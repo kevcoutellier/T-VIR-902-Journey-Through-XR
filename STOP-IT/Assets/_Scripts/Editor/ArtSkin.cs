@@ -84,6 +84,8 @@ public static class ArtSkin
         int n = 0;
         foreach (var f in FURNITURE()) if (ApplyFurniture(f)) n++;
         foreach (var p in PROPS())     if (ApplyProp(p))      n++;
+        foreach (var e in EXTRAS())    ApplyExtra(e);
+        RepositionProps();
         bool child = ApplyChild();
         if (!Application.isPlaying) UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
         Debug.Log($"[ART SKIN] {n} pièces d'art appliquées" + (child ? " + bébé" : "") +
@@ -150,9 +152,57 @@ public static class ArtSkin
         go.transform.localPosition = new Vector3(0f, p.y, 0f);
         go.transform.localRotation = Quaternion.identity;
         NavIgnore(go);
-        SetRenderer(p.t, false);
+        // Masquer le renderer du prop greybox ET ses enfants non-art
+        // (ex: le chevron cyan "PickupIndicator" de la WaterBottle).
+        foreach (var mr in target.GetComponentsInChildren<MeshRenderer>(true))
+            if (!mr.transform.IsChildOf(go.transform)) mr.enabled = false;
         Undo.RegisterCreatedObjectUndo(go, "Art " + p.t);
         return true;
+    }
+
+    // ── Déco standalone (non liée à un greybox) — réalisme salle de bain ──
+    struct Extra { public string asset, room; public Vector3 p; public float r;
+        public Extra(string a, string room, float x, float y, float z, float r)
+        { asset = a; this.room = room; p = new Vector3(x, y, z); this.r = r; } }
+
+    static Extra[] EXTRAS() => new[]
+    {
+        new Extra(TOWN+"Props/SM_Prop_Mirror_01.prefab",              "Room_Bathroom", -4.0f,  1.40f, -5.83f,   0f),
+        new Extra(TOWN+"Props/SM_Prop_Shower_01.prefab",             "Room_Bathroom", -0.6f,  0f,    -4.0f,  270f),
+        new Extra(TOWN+"Props/SM_Prop_TowelRack_01.prefab",          "Room_Bathroom", -6.82f, 1.20f, -2.2f,   90f),
+        new Extra(TOWN+"Props/SM_Prop_BathroomRug_01.prefab",        "Room_Bathroom", -4.0f,  0.02f, -4.2f,    0f),
+        new Extra(TOWN+"Items/SM_Item_ToiletRoll_Mounted_01.prefab", "Room_Bathroom", -2.8f,  0.70f, -5.83f,   0f),
+    };
+
+    static void ApplyExtra(Extra e)
+    {
+        var asset = AssetDatabase.LoadAssetAtPath<GameObject>(e.asset);
+        if (asset == null) { Debug.LogWarning($"[ART SKIN] extra manquant: {e.asset}"); return; }
+        var go = (GameObject)PrefabUtility.InstantiatePrefab(asset);
+        go.name = System.IO.Path.GetFileNameWithoutExtension(e.asset) + SFX;
+        var room = GameObject.Find(e.room);
+        go.transform.SetParent(room != null ? room.transform : null, false);
+        go.transform.position = e.p;
+        go.transform.rotation = Quaternion.Euler(0f, e.r, 0f);
+        go.isStatic = true;
+        NavIgnore(go);
+        Undo.RegisterCreatedObjectUndo(go, "Extra " + go.name);
+    }
+
+    // Repositionne des props gameplay (ex: sortir la bouteille de la baignoire → sur le meuble-lavabo).
+    static (string name, Vector3 pos)[] REPOS() => new[]
+    {
+        ("CleaningBottle", new Vector3(-3.6f, 0.82f, -5.55f)),
+        ("WaterBottle",    new Vector3(-4.4f, 0.82f, -5.55f)),
+    };
+
+    static void RepositionProps()
+    {
+        foreach (var rp in REPOS())
+        {
+            var o = GameObject.Find(rp.name);
+            if (o != null) o.transform.position = rp.pos;
+        }
     }
 
     static bool ApplyChild()
