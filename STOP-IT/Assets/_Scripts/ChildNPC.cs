@@ -18,6 +18,15 @@ using UnityEngine.AI;
 [RequireComponent(typeof(NavMeshAgent))]
 public class ChildNPC : MonoBehaviour
 {
+    // ── Reactions ──────────────────────────────────────────────────────────
+    /// <summary>Procedural reactions the child can play. Extend as scenarios grow.</summary>
+    public enum ChildReaction
+    {
+        Electrocuted,  // scenario 1 — fork in the outlet (fully implemented)
+        SkateWipeout,  // scenario 3 — skateboard down the stairs (stub)
+        Stumble        // generic trip (stub)
+    }
+
     // ── Inspector ──────────────────────────────────────────────────────────
     [Header("Behaviour")]
     [Tooltip("Target hazard zone this child walks toward")]
@@ -38,17 +47,36 @@ public class ChildNPC : MonoBehaviour
     public float repathThreshold = 0.05f;
 
     [Header("Animation")]
-    [Tooltip("Toddler head-bob amplitude (metres)")]
+    [Tooltip("Toddler head-bob amplitude (metres). Legacy fallback used when stepBobHeight is left at 0.")]
     public float bobAmplitude = 0.06f;
 
-    [Tooltip("Toddler head-bob frequency (Hz)")]
+    [Tooltip("Toddler head-bob frequency (Hz). Legacy fallback used when stepRate is left at 0.")]
     public float bobFrequency = 4f;
 
-    [Tooltip("Side-wobble tilt in degrees while walking")]
+    [Tooltip("Side-wobble tilt in degrees while walking. Legacy fallback used when waddleRollDeg is left at 0.")]
     public float wobbleAngle = 8f;
 
     [Tooltip("How fast the child turns toward the target")]
     public float turnSpeed = 6f;
+
+    [Header("Toddler Walk")]
+    [Tooltip("Steps per second of the accumulated walk phase. Drives both bob and waddle cadence.")]
+    [SerializeField] private float stepRate = 2.2f;
+
+    [Tooltip("Peak vertical bob per step (metres). Two bounces per phase cycle.")]
+    [SerializeField] private float stepBobHeight = 0.05f;
+
+    [Tooltip("Lateral waddle translation amplitude (metres), at half the bob cadence.")]
+    [SerializeField] private float waddleSideAmount = 0.025f;
+
+    [Tooltip("Lateral waddle roll (Z) amplitude in degrees, at half the bob cadence.")]
+    [SerializeField] private float waddleRollDeg = 9f;
+
+    [Tooltip("Forward lean (X tilt) in degrees at full speed.")]
+    [SerializeField] private float forwardLeanDeg = 6f;
+
+    [Tooltip("How fast the walk animation weight eases in/out (units per second).")]
+    [SerializeField] private float walkWeightLerp = 6f;
 
     [Header("Feedback")]
     public AudioSource audioSource;
@@ -65,6 +93,24 @@ public class ChildNPC : MonoBehaviour
              "ScenarioManager from ScenarioConfig.disableDirectChildSave.")]
     public bool canBeSavedDirectly = true;
 
+    [Header("Reactions")]
+    [Tooltip("Duration of the Electrocuted reaction. Match the HazardZone fail beat (~0.6s red-flash + shake).")]
+    [SerializeField] private float electrocuteDuration = 0.6f;
+
+    [Tooltip("High-frequency rigid jitter amplitude during electrocution (metres).")]
+    [SerializeField] private float electrocuteShakeAmp = 0.02f;
+
+    [Tooltip("Stiff twitchy roll/pitch amplitude during electrocution (degrees).")]
+    [SerializeField] private float electrocuteTwistDeg = 4f;
+
+    [Tooltip("If a Renderer is found on the mesh holder, pulse its emissive white during electrocution.")]
+    [SerializeField] private bool electrocuteEmissiveFlash = true;
+
+    [Header("Animator (optional)")]
+    [Tooltip("Optional Animator on a rigged mesh. Left null → purely procedural; assigning one drives " +
+             "Speed/Electrocute/React in parallel without disabling the procedural fallback.")]
+    [SerializeField] private Animator animator;
+
     // ── Runtime ────────────────────────────────────────────────────────────
     private NavMeshAgent _agent;
     private bool _isMoving = false;
@@ -77,6 +123,21 @@ public class ChildNPC : MonoBehaviour
     private Vector3 _meshStartLocalPos;
     private Transform _meshT; // first child renderer we find, for bob/tilt
     private Coroutine _walkCoroutine;
+    private Coroutine _reactionCoroutine;
+
+    // Toddler-walk procedural state.
+    private float _walkPhase;   // accumulated step phase (NOT global Time → no snap on start/stop)
+    private float _walkWeight;  // 0..1 eased blend so the gait fades in/out smoothly
+
+    // Optional emissive flash during electrocution (reuses a shared property block — no alloc).
+    private Renderer _meshRenderer;
+    private MaterialPropertyBlock _meshMpb;
+    private static readonly int EmissionColorProp = Shader.PropertyToID("_EmissionColor");
+
+    // Animator parameter hashes. Names are part of the contract a future controller binds to.
+    private static readonly int AnimSpeed = Animator.StringToHash("Speed");
+    private static readonly int AnimElectrocute = Animator.StringToHash("Electrocute");
+    private static readonly int AnimReact = Animator.StringToHash("React");
 
     public bool IsMoving => _isMoving && !_isStopped;
 
@@ -97,6 +158,16 @@ public class ChildNPC : MonoBehaviour
         // fight the agent (and the child would appear stuck).
         _meshT = FindOrCreateMeshHolder();
         _meshStartLocalPos = _meshT.localPosition;
+
+        // Cache a renderer + property block for the optional electrocution flash.
+        // No material instancing — we only push an emissive colour via the block.
+        _meshRenderer = _meshT.GetComponent<Renderer>();
+        if (_meshRenderer == null) _meshRenderer = GetComponentInChildren<Renderer>(true);
+        _meshMpb = new MaterialPropertyBlock();
+
+        // Optional rigged Animator — purely additive. When absent (current art),
+        // nothing changes and the procedural animation is the sole driver.
+        if (animator == null) animator = GetComponentInChildren<Animator>(true);
 
         // Auto-create the skateboard placeholder (parented under the NPC, disabled
         // by default — ScenarioManager toggles it via SetSkateboardVisible).
@@ -219,6 +290,10 @@ public class ChildNPC : MonoBehaviour
             if (!_agent.pathPending && _agent.remainingDistance <= _agent.stoppingDistance)
             {
                 _isMoving = false;
+                // Outlet scenario: fire the electrocution reaction on the same frame as
+                // the HazardZone flash so the toddler twitches in sync with the zap.
+                if (targetHazard != null && targetHazard.hazardName == "Electrical Outlet")
+                    PlayReaction(ChildReaction.Electrocuted);
                 targetHazard?.TriggerHazard();
             }
         }
@@ -440,6 +515,9 @@ public class ChildNPC : MonoBehaviour
     public void ResetForScenario()
     {
         _forceWalkNow = false;
+        StopActiveReaction();
+        _walkPhase = 0f;
+        _walkWeight = 0f;
         if (_held)
         {
             _held = false;
@@ -507,22 +585,189 @@ public class ChildNPC : MonoBehaviour
         _meshT.localRotation = startRot;
     }
 
+    /// <summary>
+    /// Procedural "toddler waddle". Driven by a single accumulated step phase so the
+    /// gait never jumps when movement starts/stops, with a smoothly eased 0..1 weight.
+    ///  • Bob   : |sin(phase·π)| → two bounces per cycle (cadence).
+    ///  • Waddle: lateral slide + Z-roll at HALF the bob cadence (one sway per step pair).
+    ///  • Lean  : small forward X-tilt scaled by normalised speed.
+    /// Runs alongside the optional Animator (which gets the same Speed value) — never
+    /// blocked by it, so a missing/!rigged Animator changes nothing.
+    /// </summary>
     private void AnimateWalk()
     {
         if (_meshT == null) return;
-        if (IsMoving)
+
+        // A reaction coroutine owns _meshT while it runs; don't fight it.
+        if (_reactionCoroutine != null) return;
+
+        // Speed factor 0..1 (used both for the procedural lean and the Animator).
+        float speed01 = walkSpeed > 0.001f
+            ? Mathf.Clamp01(_agent != null ? _agent.velocity.magnitude / walkSpeed : 0f)
+            : 0f;
+
+        bool walking = IsMoving;
+
+        // Legacy-aware tunables: fall back to the old public fields when the new
+        // ones are left at 0, so existing inspector setups keep working.
+        float rate     = stepRate       > 0.001f ? stepRate       : bobFrequency * 0.5f;
+        float bobAmp   = stepBobHeight  > 0.0001f ? stepBobHeight : bobAmplitude;
+        float rollAmp  = waddleRollDeg  > 0.001f ? waddleRollDeg  : wobbleAngle;
+
+        // Smoothly blend the whole gait in/out — no snap.
+        float targetWeight = walking ? 1f : 0f;
+        _walkWeight = Mathf.MoveTowards(_walkWeight, targetWeight, walkWeightLerp * Time.deltaTime);
+
+        // Only advance the step phase while actually moving (freezes mid-stride on stop).
+        if (walking)
         {
-            float t = Time.time * bobFrequency;
-            float bob = Mathf.Abs(Mathf.Sin(t * Mathf.PI)) * bobAmplitude;
-            float wobble = Mathf.Sin(t * Mathf.PI) * wobbleAngle;
-            _meshT.localPosition = _meshStartLocalPos + Vector3.up * bob;
-            _meshT.localRotation = Quaternion.Euler(0f, 0f, wobble);
+            _walkPhase += rate * Time.deltaTime;
+            if (_walkPhase > 1000f) _walkPhase -= 1000f; // keep the float small & precise
+        }
+
+        if (_walkWeight > 0.0001f)
+        {
+            float bobArg    = _walkPhase * Mathf.PI;        // full cadence
+            float waddleArg = _walkPhase * Mathf.PI * 0.5f; // half cadence (per step pair)
+
+            float bob   = Mathf.Abs(Mathf.Sin(bobArg)) * bobAmp;
+            float side  = Mathf.Sin(waddleArg) * waddleSideAmount;
+            float roll  = Mathf.Sin(waddleArg) * rollAmp;
+            float lean  = forwardLeanDeg * speed01;
+
+            Vector3 offset = new Vector3(side, bob, 0f) * _walkWeight;
+            _meshT.localPosition = _meshStartLocalPos + offset;
+            _meshT.localRotation = Quaternion.Euler(lean * _walkWeight, 0f, roll * _walkWeight);
         }
         else
         {
-            // Ease back to rest
+            // Fully at rest — settle exactly onto the rest pose (no lingering drift).
             _meshT.localPosition = Vector3.Lerp(_meshT.localPosition, _meshStartLocalPos, Time.deltaTime * 8f);
             _meshT.localRotation = Quaternion.Slerp(_meshT.localRotation, Quaternion.identity, Time.deltaTime * 8f);
+        }
+
+        // Optional Animator bridge — parallel, never a replacement.
+        if (animator != null) animator.SetFloat(AnimSpeed, walking ? speed01 : 0f);
+    }
+
+    // ── Reactions ──────────────────────────────────────────────────────────
+    /// <summary>
+    /// Plays a procedural reaction and notifies the optional Animator bridge.
+    /// Electrocuted is a failure beat: it sets _isStopped and freezes the child.
+    /// Stubs (SkateWipeout/Stumble) keep the API ready without committing visuals.
+    /// </summary>
+    public void PlayReaction(ChildReaction reaction)
+    {
+        // Never react while held (player saved them) or already mid-reaction.
+        if (_held || _reactionCoroutine != null) return;
+
+        switch (reaction)
+        {
+            case ChildReaction.Electrocuted:
+                // The zap is a fail: freeze the toddler in place.
+                _isStopped = true;
+                _isMoving = false;
+                if (_agent != null && _agent.isActiveAndEnabled && _agent.isOnNavMesh)
+                    _agent.isStopped = true;
+                if (animator != null) animator.SetTrigger(AnimElectrocute);
+                _reactionCoroutine = StartCoroutine(ElectrocutedRoutine());
+                break;
+
+            case ChildReaction.SkateWipeout:
+            case ChildReaction.Stumble:
+                if (animator != null) animator.SetTrigger(AnimReact);
+                Debug.LogWarning($"[ChildNPC] Reaction '{reaction}' not yet implemented (stub).", this);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Stiff, high-frequency electrocution twitch on the mesh holder only.
+    /// Uses summed Mathf.Sin harmonics (deterministic, zero per-frame allocation)
+    /// for the jitter, twitchy low-amplitude roll/pitch, and an optional emissive
+    /// white pulse via a MaterialPropertyBlock. Restores the rest pose at the end;
+    /// the child stays frozen (failure). Does NOT report success/fail — HazardZone does.
+    /// </summary>
+    private IEnumerator ElectrocutedRoutine()
+    {
+        Vector3 startPos = _meshT.localPosition;
+        Quaternion startRot = _meshT.localRotation;
+
+        // Capture the renderer's current emissive so we can restore it after the flash.
+        bool canFlash = electrocuteEmissiveFlash && _meshRenderer != null;
+        Color emissiveStart = Color.black;
+        if (canFlash)
+        {
+            _meshRenderer.GetPropertyBlock(_meshMpb);
+            emissiveStart = _meshMpb.GetColor(EmissionColorProp);
+        }
+
+        float elapsed = 0f;
+        float duration = Mathf.Max(0.05f, electrocuteDuration);
+        while (elapsed < duration)
+        {
+            elapsed += Time.deltaTime;
+            float t = elapsed / duration;
+            float decay = 1f - t; // ease the violence out toward the end
+
+            // ~25-30 Hz rigid jitter from high harmonics of the elapsed time.
+            // Two incommensurate frequencies per axis → non-repeating, deterministic.
+            float jx = Mathf.Sin(elapsed * 168f) + 0.5f * Mathf.Sin(elapsed * 271f);
+            float jy = Mathf.Sin(elapsed * 191f) + 0.5f * Mathf.Sin(elapsed * 233f);
+            float jz = Mathf.Sin(elapsed * 209f) + 0.5f * Mathf.Sin(elapsed * 311f);
+            Vector3 jitter = new Vector3(jx, jy, jz) * (electrocuteShakeAmp * 0.6667f * decay);
+
+            // Stiff twitchy roll/pitch (different harmonics so it doesn't mirror the jitter).
+            float twX = Mathf.Sin(elapsed * 154f) * electrocuteTwistDeg * decay;
+            float twZ = Mathf.Sin(elapsed * 187f) * electrocuteTwistDeg * decay;
+
+            _meshT.localPosition = startPos + jitter;
+            _meshT.localRotation = startRot * Quaternion.Euler(twX, 0f, twZ);
+
+            // Emissive white pulse in phase with the jitter.
+            if (canFlash)
+            {
+                float pulse = (0.5f + 0.5f * Mathf.Sin(elapsed * 168f)) * decay;
+                _meshRenderer.GetPropertyBlock(_meshMpb);
+                _meshMpb.SetColor(EmissionColorProp, Color.white * (pulse * 2f));
+                _meshRenderer.SetPropertyBlock(_meshMpb);
+            }
+            yield return null;
+        }
+
+        // Restore pose; the child remains frozen (failure state owned by HazardZone).
+        _meshT.localPosition = startPos;
+        _meshT.localRotation = startRot;
+        if (canFlash)
+        {
+            _meshRenderer.GetPropertyBlock(_meshMpb);
+            _meshMpb.SetColor(EmissionColorProp, emissiveStart);
+            _meshRenderer.SetPropertyBlock(_meshMpb);
+        }
+        _reactionCoroutine = null;
+    }
+
+    /// <summary>
+    /// Cancels any running reaction and restores the mesh holder's rest pose &amp; emissive.
+    /// Called when a scenario resets so a child frozen mid-electrocution starts clean.
+    /// </summary>
+    private void StopActiveReaction()
+    {
+        if (_reactionCoroutine != null)
+        {
+            StopCoroutine(_reactionCoroutine);
+            _reactionCoroutine = null;
+        }
+        if (_meshT != null)
+        {
+            _meshT.localPosition = _meshStartLocalPos;
+            _meshT.localRotation = Quaternion.identity;
+        }
+        if (electrocuteEmissiveFlash && _meshRenderer != null && _meshMpb != null)
+        {
+            _meshRenderer.GetPropertyBlock(_meshMpb);
+            _meshMpb.SetColor(EmissionColorProp, Color.black);
+            _meshRenderer.SetPropertyBlock(_meshMpb);
         }
     }
 
@@ -551,6 +796,11 @@ public class ChildNPC : MonoBehaviour
 
             // Re-enable the agent if Grab() disabled it on the previous round.
             if (_agent != null && !_agent.enabled) _agent.enabled = true;
+
+            // Clear any electrocution freeze/twitch left over from the previous round.
+            StopActiveReaction();
+            _walkPhase = 0f;
+            _walkWeight = 0f;
 
             _isStopped = false;
             _isMoving = false;
