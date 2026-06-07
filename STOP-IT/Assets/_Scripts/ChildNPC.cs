@@ -114,6 +114,8 @@ public class ChildNPC : MonoBehaviour
     // ── Runtime ────────────────────────────────────────────────────────────
     private NavMeshAgent _agent;
     private bool _isMoving = false;
+    private Renderer[] _bodyRenderers;
+    private MaterialPropertyBlock _tintMpb;
     private bool _isStopped = false;
     private bool _held = false;
     private bool _forceWalkNow = false;
@@ -138,6 +140,27 @@ public class ChildNPC : MonoBehaviour
     private static readonly int AnimSpeed = Animator.StringToHash("Speed");
     private static readonly int AnimElectrocute = Animator.StringToHash("Electrocute");
     private static readonly int AnimReact = Animator.StringToHash("React");
+    private static readonly int AnimPickUp = Animator.StringToHash("PickUp");
+    private static readonly int AnimPutFork = Animator.StringToHash("PutFork");
+    private static readonly int AnimPutCat = Animator.StringToHash("PutCat");
+    private static readonly int AnimDrink = Animator.StringToHash("Drink");
+    private static readonly int AnimDie = Animator.StringToHash("Die");
+    private static readonly int AnimSurprised = Animator.StringToHash("Surprised");
+    private static readonly int AnimCarried = Animator.StringToHash("Carried");
+
+    [Header("Story animation timing")]
+    [Tooltip("Pause (s) at the pickup waypoint while the PickUp animation plays before the item attaches.")]
+    [SerializeField] private float pickupAnimDuration = 1.3f;
+    [Tooltip("Pause (s) at the hazard while the PutFork animation plays before the electrocution/fail.")]
+    [SerializeField] private float putForkAnimDuration = 1.0f;
+    [Tooltip("Pause (s) at the microwave while the PutCat animation plays before the cat is placed inside.")]
+    [SerializeField] private float putCatAnimDuration = 1.0f;
+    [Tooltip("Pause (s) at the cleaning products while the sit-and-drink animation plays (the swap window).")]
+    [SerializeField] private float drinkAnimDuration = 3.0f;
+    [Tooltip("Pause (s) for the poisoned death animation before the loss is reported.")]
+    [SerializeField] private float dieAnimDuration = 2.0f;
+    [Tooltip("When (s into the pickup) the item transfers from the floor to the hand — the 'grab' moment (~half the clip).")]
+    [SerializeField] private float pickupAttachDelay = 0.65f;
 
     public bool IsMoving => _isMoving && !_isStopped;
 
@@ -148,6 +171,11 @@ public class ChildNPC : MonoBehaviour
         _agent.speed = walkSpeed;
         _agent.stoppingDistance = 0.3f;
         _agent.angularSpeed = 360f; // more snappy turns, we also hand-rotate
+        // ChildNPC fully owns rotation: hand-rotate toward velocity while walking (Update) and
+        // FaceToward the fork/cat/outlet/microwave at pickup & hazard. If the agent kept
+        // updateRotation on, it would overwrite FaceToward every frame and the child would
+        // face its arrival direction instead of the appliance (the "not facing the microwave" bug).
+        _agent.updateRotation = false;
 
         // Ensure the "Child" tag is set so PlayerBlocker can detect us.
         try { if (!CompareTag("Child")) tag = "Child"; } catch { /* tag not defined yet — fine */ }
@@ -240,20 +268,37 @@ public class ChildNPC : MonoBehaviour
         return holderGO.transform;
     }
 
+    private bool _subscribedToGm;
+
     private void OnEnable()
     {
-        if (GameManager.Instance != null)
-            GameManager.Instance.OnStateChanged.AddListener(OnGameStateChanged);
+        TrySubscribeToGameManager();
     }
 
     private void OnDisable()
     {
-        if (GameManager.Instance != null)
+        if (_subscribedToGm && GameManager.Instance != null)
             GameManager.Instance.OnStateChanged.RemoveListener(OnGameStateChanged);
+        _subscribedToGm = false;
+    }
+
+    /// <summary>
+    /// Subscribe to GameManager state changes — called from BOTH OnEnable and Start. At OnEnable
+    /// time GameManager.Instance may not exist yet (Awake order between same-execution-order objects
+    /// is undefined), so the OnEnable attempt can silently no-op. Without the Start fallback the
+    /// child would NEVER receive the Playing event on restart and would stay planted after a fail.
+    /// Guarded so it only subscribes once.
+    /// </summary>
+    private void TrySubscribeToGameManager()
+    {
+        if (_subscribedToGm || GameManager.Instance == null) return;
+        GameManager.Instance.OnStateChanged.AddListener(OnGameStateChanged);
+        _subscribedToGm = true;
     }
 
     private void Start()
     {
+        TrySubscribeToGameManager(); // fallback in case GameManager wasn't ready at OnEnable
         if (targetHazard != null)
         {
             _lastTargetPos = targetHazard.transform.position;
@@ -268,7 +313,7 @@ public class ChildNPC : MonoBehaviour
         {
             if (Time.time >= _nextRepathTime)
             {
-                Vector3 tp = targetHazard.transform.position;
+                Vector3 tp = CurrentDestination();
                 if ((tp - _lastTargetPos).sqrMagnitude > repathThreshold * repathThreshold || !_agent.hasPath)
                 {
                     _agent.SetDestination(tp);
@@ -286,15 +331,22 @@ public class ChildNPC : MonoBehaviour
                 transform.rotation = Quaternion.Slerp(transform.rotation, target, turnSpeed * Time.deltaTime);
             }
 
-            // Reached destination
+            // Reached the current leg target.
             if (!_agent.pathPending && _agent.remainingDistance <= _agent.stoppingDistance)
             {
-                _isMoving = false;
-                // Outlet scenario: fire the electrocution reaction on the same frame as
-                // the HazardZone flash so the toddler twitches in sync with the zap.
-                if (targetHazard != null && targetHazard.hazardName == "Electrical Outlet")
-                    PlayReaction(ChildReaction.Electrocuted);
-                targetHazard?.TriggerHazard();
+                if (_walkingToPickup)
+                {
+                    // Arrived at the pickup waypoint: play the PickUp animation, then attach & continue.
+                    _walkingToPickup = false;
+                    _isMoving = false;
+                    StartCoroutine(PickupRoutine());
+                }
+                else
+                {
+                    // Arrived at the hazard: play the PutFork beat, then the zap / fail.
+                    _isMoving = false;
+                    StartCoroutine(HazardArrivalRoutine());
+                }
             }
         }
 
@@ -384,8 +436,13 @@ public class ChildNPC : MonoBehaviour
         // Gentle left-right sway while held (slow, low amplitude). Replaces the
         // older cartoon bounce, which was a fast vertical bob + Z-axis spin and
         // read as "vibration" when E was held down.
-        if (_heldSwayCoroutine != null) StopCoroutine(_heldSwayCoroutine);
-        _heldSwayCoroutine = StartCoroutine(HeldSway());
+        // Rigged: play the Surprised reaction then the Carried loop. Otherwise procedural sway.
+        if (animator != null) { animator.SetTrigger(AnimSurprised); animator.SetBool(AnimCarried, true); }
+        if (animator == null || animator.runtimeAnimatorController == null)
+        {
+            if (_heldSwayCoroutine != null) StopCoroutine(_heldSwayCoroutine);
+            _heldSwayCoroutine = StartCoroutine(HeldSway());
+        }
 
         if (caughtClip != null && audioSource != null)
             audioSource.PlayOneShot(caughtClip);
@@ -428,6 +485,7 @@ public class ChildNPC : MonoBehaviour
     {
         if (!_held) return;
         _held = false;
+        if (animator != null) animator.SetBool(AnimCarried, false);
         transform.SetParent(_originalParent, worldPositionStays: true);
         SetCollidersEnabled(true);
 
@@ -495,11 +553,183 @@ public class ChildNPC : MonoBehaviour
         _carriedItemOriginalLocalRot  = item.transform.localRotation;
         _carriedItemOriginalLocalScale = item.transform.localScale;
         _carriedItemWasActive         = item.activeSelf;
+        Vector3 worldScale = item.transform.lossyScale;
 
-        item.transform.SetParent(transform, worldPositionStays: false);
+        Transform attach = GetCarryAttach();
+        item.transform.SetParent(attach, worldPositionStays: false);
         item.transform.localPosition = localPos;
         item.transform.localRotation = Quaternion.Euler(localEuler);
+        // Keep the item's authored world size regardless of the (scaled) hand bone it hangs off.
+        Vector3 pls = attach.lossyScale;
+        item.transform.localScale = new Vector3(
+            worldScale.x / Mathf.Max(1e-4f, pls.x),
+            worldScale.y / Mathf.Max(1e-4f, pls.y),
+            worldScale.z / Mathf.Max(1e-4f, pls.z));
         item.SetActive(true);
+    }
+
+    /// <summary>Hands the currently-carried item to an external owner (e.g. CatGrab) WITHOUT restoring it
+    /// to its bed. Detaches it from the hand keeping world pose and clears tracking, so the next scenario
+    /// activation's SetCarriedItem(null) won't auto-return it. The new owner manages it from now on.</summary>
+    public void ForgetCarriedItem()
+    {
+        if (_carriedItem != null) _carriedItem.transform.SetParent(null, worldPositionStays: true);
+        _carriedItem = null;
+    }
+
+    /// <summary>The transform a carried item attaches to: the right-hand bone (so the item follows
+    /// the arm during walk/pickup), falling back to the NPC root if no Humanoid hand is available.</summary>
+    private Transform GetCarryAttach()
+    {
+        if (animator != null && animator.isHuman)
+        {
+            var hand = animator.GetBoneTransform(HumanBodyBones.RightHand);
+            if (hand != null) return hand;
+        }
+        return transform;
+    }
+
+    // ── Pickup waypoint (two-leg walk: fetch an item, then head to the hazard) ─
+    private Transform _pickupWaypoint;
+    private GameObject _pickupItem;
+    private Vector3 _pickupItemLocalPos = new Vector3(0.12f, 0.48f, 0.22f);
+    private Vector3 _pickupItemLocalEuler;
+    private bool _walkingToPickup;
+
+    /// <summary>
+    /// Arms a two-leg walk: the child first walks to <paramref name="waypoint"/>, picks up
+    /// <paramref name="item"/> there, then continues to the hazard. Pass a null waypoint or
+    /// item to disable the pickup leg (walk straight to the hazard — legacy behaviour).
+    /// Called by ScenarioManager.ActivateScenario from ScenarioConfig.
+    /// </summary>
+    public void SetPickup(Transform waypoint, GameObject item, Vector3 localPos, Vector3 localEuler)
+    {
+        _pickupWaypoint = waypoint;
+        _pickupItem = item;
+        _pickupItemLocalPos = localPos;
+        _pickupItemLocalEuler = localEuler;
+        _walkingToPickup = waypoint != null && item != null;
+    }
+
+    /// <summary>Current navigation leg target: the pickup waypoint until reached, then the hazard.</summary>
+    private Vector3 CurrentDestination()
+    {
+        if (_walkingToPickup && _pickupWaypoint != null) return _pickupWaypoint.position;
+        return targetHazard != null ? targetHazard.transform.position : transform.position;
+    }
+
+    /// <summary>At the pickup waypoint: pause, play the PickUp animation, attach the item, then resume to the hazard.</summary>
+    /// <summary>Instantly turns the child to face a world position (XZ only).</summary>
+    private void FaceToward(Vector3 worldPos)
+    {
+        Vector3 dir = worldPos - transform.position; dir.y = 0f;
+        if (dir.sqrMagnitude > 0.0001f) transform.rotation = Quaternion.LookRotation(dir, Vector3.up);
+    }
+
+    private IEnumerator PickupRoutine()
+    {
+        if (_agent != null && _agent.isActiveAndEnabled && _agent.isOnNavMesh) _agent.isStopped = true;
+        if (_pickupItem != null) FaceToward(_pickupItem.transform.position); // face the fork/cat
+        if (animator != null) animator.SetTrigger(AnimPickUp);
+
+        // The fork stays on the floor while the child bends down, then transfers to the hand at the
+        // "grab" moment (~half the clip); the child finishes standing and walks off with it.
+        float attach = Mathf.Clamp(pickupAttachDelay, 0f, pickupAnimDuration);
+        yield return new WaitForSeconds(attach);
+        if (_held || _isStopped) yield break;
+        if (_pickupItem != null)
+            SetCarriedItem(_pickupItem, _pickupItemLocalPos, _pickupItemLocalEuler);
+        yield return new WaitForSeconds(pickupAnimDuration - attach);
+        if (_held || _isStopped) yield break;   // player caught the child during the pickup
+
+        if (targetHazard != null)
+        {
+            _lastTargetPos = targetHazard.transform.position;
+            if (_agent != null && _agent.isActiveAndEnabled && _agent.isOnNavMesh)
+            {
+                _agent.isStopped = false;
+                _agent.SetDestination(_lastTargetPos);
+            }
+        }
+        _isMoving = true;
+    }
+
+    /// <summary>At the hazard: (outlet) play the PutFork beat with a last-chance save window, then zap + fail.</summary>
+    private IEnumerator HazardArrivalRoutine()
+    {
+        if (_agent != null && _agent.isActiveAndEnabled && _agent.isOnNavMesh) _agent.isStopped = true;
+        if (targetHazard != null) FaceToward(targetHazard.transform.position); // face the outlet/microwave
+
+        string hzName = targetHazard != null ? targetHazard.hazardName : "";
+        bool isOutlet = hzName == "Electrical Outlet";
+        bool isMicrowave = hzName == "Microwave";
+        bool isCleaningProduct = hzName == "Cleaning Product";
+
+        if (isOutlet)
+        {
+            if (animator != null)
+            {
+                animator.SetTrigger(AnimPutFork);
+                yield return new WaitForSeconds(putForkAnimDuration);
+                if (_held || _isStopped) yield break; // saved during the fork-insertion beat
+            }
+            InsertCarriedItemIntoHazard(); // snap the fork into the outlet exactly at the zap
+            PlayReaction(ChildReaction.Electrocuted);
+        }
+        else if (isMicrowave)
+        {
+            if (animator != null)
+            {
+                animator.SetTrigger(AnimPutCat);
+                yield return new WaitForSeconds(putCatAnimDuration);
+                if (_held || _isStopped) yield break; // saved during the put-cat beat
+            }
+            InsertCarriedItemIntoHazard(); // place the cat inside the microwave
+            // Freeze the child; the microwave (HazardZone.MicrowaveSequence) runs then explodes.
+            _isStopped = true;
+            _isMoving = false;
+            if (_agent != null && _agent.isActiveAndEnabled && _agent.isOnNavMesh) _agent.isStopped = true;
+        }
+        else if (isCleaningProduct)
+        {
+            Debug.Log($"[ChildNPC] S3 arrival — drinking at {transform.position}; hazard '{(targetHazard!=null?targetHazard.hazardName:"<null>")}' at {(targetHazard!=null?targetHazard.transform.position.ToString():"<null>")}", this);
+            // Sit and drink whatever is at the spot (poison OR — if the player swapped in time — water).
+            if (animator != null)
+            {
+                animator.SetTrigger(AnimDrink);
+                yield return new WaitForSeconds(drinkAnimDuration);
+                if (_held || _isStopped) yield break;
+            }
+            // The swap is allowed right up to the end of the drink: if neutralised, it was water → win.
+            if (targetHazard != null && targetHazard.IsNeutralised)
+            {
+                targetHazard.TriggerHazard(); // → NeutralisedSuccessSequence → ReportSuccess
+                yield break;
+            }
+            // Poison: the toddler turns green and collapses backwards, then we lose.
+            SetPoisonTint(true);
+            if (animator != null) animator.SetTrigger(AnimDie);
+            _isStopped = true;
+            _isMoving = false;
+            if (_agent != null && _agent.isActiveAndEnabled && _agent.isOnNavMesh) _agent.isStopped = true;
+            yield return new WaitForSeconds(dieAnimDuration);
+            GameManager.Instance?.ReportFail();
+            yield break;
+        }
+
+        if (targetHazard != null) targetHazard.TriggerHazard();
+    }
+
+    /// <summary>
+    /// At the electrocution beat, detaches the carried item (fork) from the hand and snaps it into
+    /// the hazard (outlet) so it reads as "inserted" exactly when the child is zapped — not before.
+    /// </summary>
+    private void InsertCarriedItemIntoHazard()
+    {
+        if (_carriedItem == null || targetHazard == null) return;
+        _carriedItem.transform.SetParent(null, worldPositionStays: true);
+        _carriedItem.transform.position = targetHazard.transform.position;
+        _carriedItem.transform.rotation = targetHazard.transform.rotation; // fixed outlet orientation
     }
 
     /// <summary>
@@ -515,16 +745,42 @@ public class ChildNPC : MonoBehaviour
     public void ResetForScenario()
     {
         _forceWalkNow = false;
+        _walkingToPickup = false;
+        _isStopped = false;
+        _isMoving = false;
         StopActiveReaction();
         _walkPhase = 0f;
         _walkWeight = 0f;
+        if (animator != null) animator.SetBool(AnimCarried, false);
         if (_held)
         {
             _held = false;
             transform.SetParent(_originalParent, worldPositionStays: false);
         }
         SetCollidersEnabled(true);
+        SetPoisonTint(false);
         if (_agent != null && !_agent.enabled) _agent.enabled = true;
+    }
+
+    /// <summary>Tints the whole toddler green (poisoned) or clears it. Uses a MaterialPropertyBlock so
+    /// it creates no material instances and is trivially reversible on restart.</summary>
+    public void SetPoisonTint(bool on)
+    {
+        if (_bodyRenderers == null) _bodyRenderers = GetComponentsInChildren<Renderer>(true);
+        if (_tintMpb == null) _tintMpb = new MaterialPropertyBlock();
+        var green = new Color(0.35f, 0.8f, 0.2f);
+        foreach (var r in _bodyRenderers)
+        {
+            if (r == null) continue;
+            if (on)
+            {
+                r.GetPropertyBlock(_tintMpb);
+                _tintMpb.SetColor("_BaseColor", green);
+                _tintMpb.SetColor("_Color", green);
+                r.SetPropertyBlock(_tintMpb);
+            }
+            else r.SetPropertyBlock(null);
+        }
     }
 
     /// <summary>How close (0 = far, 1 = touching) the child is to its target.</summary>
@@ -549,17 +805,31 @@ public class ChildNPC : MonoBehaviour
 
         if (_isStopped || targetHazard == null) yield break;
 
-        // Wait until the agent is on the NavMesh (can take a frame after a warp).
+        // Make sure we're actually ON the NavMesh before driving the agent. A NavMeshAgent.Warp
+        // during ActivateScenario can silently fail when re-activating after a previous round,
+        // leaving the agent off-mesh (isOnNavMesh=false) — it then never moves, and any isStopped
+        // call throws. Re-bind by re-acquiring the NavMesh.
+        RebindAgentToNavMesh();
         float waitEnd = Time.time + 1f;
-        while (Time.time < waitEnd && (!_agent.isActiveAndEnabled || !_agent.isOnNavMesh))
+        while (Time.time < waitEnd && (_agent == null || !_agent.isActiveAndEnabled || !_agent.isOnNavMesh))
+        {
+            RebindAgentToNavMesh();
             yield return null;
+        }
+        if (_agent == null || !_agent.isOnNavMesh)
+        {
+            Debug.LogWarning("[ChildNPC] Couldn't bind to the NavMesh — child can't walk. " +
+                             "Check the spawn point sits on the baked NavMesh.", this);
+            yield break;
+        }
 
         if (laughClip != null && audioSource != null)
             audioSource.PlayOneShot(laughClip);
 
-        _lastTargetPos = targetHazard.transform.position;
+        Vector3 firstDest = CurrentDestination();
+        _lastTargetPos = firstDest;
         _agent.isStopped = false;
-        _agent.SetDestination(_lastTargetPos);
+        _agent.SetDestination(firstDest);
         _isMoving = true;
         Debug.Log($"[ChildNPC] Walking toward '{targetHazard.gameObject.name}' at {_lastTargetPos} " +
                   $"(agent.isOnNavMesh={_agent.isOnNavMesh}, hasPath={_agent.hasPath}, pathStatus={_agent.pathStatus})", this);
@@ -670,7 +940,10 @@ public class ChildNPC : MonoBehaviour
                 if (_agent != null && _agent.isActiveAndEnabled && _agent.isOnNavMesh)
                     _agent.isStopped = true;
                 if (animator != null) animator.SetTrigger(AnimElectrocute);
-                _reactionCoroutine = StartCoroutine(ElectrocutedRoutine());
+                // With a rigged animator, the BeingElectrocuted clip handles the visual —
+                // skip the procedural jitter so the two don't fight.
+                if (animator == null || animator.runtimeAnimatorController == null)
+                    _reactionCoroutine = StartCoroutine(ElectrocutedRoutine());
                 break;
 
             case ChildReaction.SkateWipeout:
@@ -771,6 +1044,26 @@ public class ChildNPC : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Snaps the rigged animator back to Idle and clears pending triggers, so a scenario restart
+    /// (e.g. the player retrying before the electrocution clip finished) doesn't keep playing the
+    /// old reaction animation.
+    /// </summary>
+    private void ResetAnimatorToIdle()
+    {
+        if (animator == null || animator.runtimeAnimatorController == null) return;
+        animator.ResetTrigger(AnimElectrocute);
+        animator.ResetTrigger(AnimPutFork);
+        animator.ResetTrigger(AnimPutCat);
+        animator.ResetTrigger(AnimPickUp);
+        animator.ResetTrigger(AnimSurprised);
+        animator.ResetTrigger(AnimDrink);
+        animator.ResetTrigger(AnimDie);
+        animator.SetBool(AnimCarried, false);
+        animator.SetFloat(AnimSpeed, 0f);
+        animator.Play("Idle", 0, 0f);
+    }
+
     private void OnGameStateChanged(GameManager.GameState state)
     {
         if (state != GameManager.GameState.Playing)
@@ -793,12 +1086,15 @@ public class ChildNPC : MonoBehaviour
                 _held = false;
                 transform.SetParent(_originalParent, worldPositionStays: false);
             }
+            if (animator != null) animator.SetBool(AnimCarried, false);
 
             // Re-enable the agent if Grab() disabled it on the previous round.
             if (_agent != null && !_agent.enabled) _agent.enabled = true;
 
             // Clear any electrocution freeze/twitch left over from the previous round.
             StopActiveReaction();
+            ResetAnimatorToIdle();   // snap out of Electrocute/etc. if the player retried mid-animation
+            SetPoisonTint(false);    // clear the green poison tint from a previous S3 death
             _walkPhase = 0f;
             _walkWeight = 0f;
 
@@ -820,7 +1116,26 @@ public class ChildNPC : MonoBehaviour
         yield return null;
         yield return null;
         if (targetHazard == null) yield break;
+        RebindAgentToNavMesh();
         yield return BeginWalkAfterDelay();
+    }
+
+    /// <summary>
+    /// Re-binds the NavMeshAgent onto the NavMesh if it has fallen off (isOnNavMesh=false).
+    /// ScenarioManager warps the child on (re)activation, but Warp can silently fail when
+    /// re-activating after a previous round — sampling the nearest point and warping is reliable.
+    /// </summary>
+    private void RebindAgentToNavMesh()
+    {
+        if (_agent == null || !_agent.enabled || _agent.isOnNavMesh) return;
+        Vector3 pos = transform.position;
+        if (NavMesh.SamplePosition(pos, out NavMeshHit hit, 5f, NavMesh.AllAreas)) pos = hit.position;
+        // Disable → reposition → enable forces the agent to re-acquire the NavMesh at this point.
+        // This is more reliable than NavMeshAgent.Warp, which silently fails when re-activating.
+        _agent.enabled = false;
+        transform.position = pos;
+        _agent.enabled = true;
+        Debug.Log($"[ChildNPC] Re-bound agent to NavMesh at {pos} (onNavMesh now {_agent.isOnNavMesh})", this);
     }
 
 #if UNITY_EDITOR

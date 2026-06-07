@@ -148,6 +148,7 @@ public class ScenarioUI : MonoBehaviour
                 break;
             case GameManager.GameState.Fail:
                 BounceFeedback(failMessage, new Color(1f, 0.25f, 0.25f));
+                if (timerText) { timerText.text = "00"; timerText.color = urgentTimerColor; }
                 break;
             case GameManager.GameState.GameOver:
                 BounceFeedback(gameOverMessage, new Color(1f, 0.9f, 0.2f));
