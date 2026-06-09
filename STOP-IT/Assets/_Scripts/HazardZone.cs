@@ -43,6 +43,19 @@ public class HazardZone : MonoBehaviour
     [Tooltip("Optional particle system for success confetti. Auto-created if null.")]
     public ParticleSystem confetti;
 
+    [Header("Spark colour / Microwave mode")]
+    [Tooltip("Colour of the danger sparks (yellow for most hazards, red for the microwave = the cat exploding).")]
+    public Color sparkColor = new Color(1f, 0.9f, 0.2f);
+    [Tooltip("If true, on trigger the hazard runs the microwave sequence: light on → wait → red burst → fail (no flash/pulse).")]
+    public bool microwaveMode = false;
+    [Tooltip("Seconds the microwave 'runs' (light on) before the cat explodes and the player loses.")]
+    public float microwaveRunSeconds = 2f;
+    [Tooltip("Optional light switched on while the microwave runs. Auto-created in microwaveMode.")]
+    public Light microwaveLight;
+    [Tooltip("If true, suppress the approach VFX (sparks/hum/pulse) — e.g. the cleaning-product (poison) " +
+             "hazard, whose danger is conveyed by the toddler drinking + collapsing, not electrical sparks.")]
+    public bool silentApproach = false;
+
     [Header("Events")]
     [Tooltip("Triggered when hazard detonates (fail).")]
     public UnityEngine.Events.UnityEvent OnHazardTriggered;
@@ -50,6 +63,7 @@ public class HazardZone : MonoBehaviour
     // ── Runtime ────────────────────────────────────────────────────────────
     private bool _triggered = false;
     private bool _neutralised = false;
+    public bool IsNeutralised => _neutralised;
     private ChildNPC _child;
     private static readonly int BaseColorProp = Shader.PropertyToID("_BaseColor");
     private static readonly int EmissionColorProp = Shader.PropertyToID("_EmissionColor");
@@ -95,6 +109,11 @@ public class HazardZone : MonoBehaviour
     private void Update()
     {
         if (_triggered)
+            return;
+
+        // Microwave shows NOTHING until the cat explodes; the poison hazard shows nothing at all.
+        // (No proximity sparks/hum/pulse — danger is conveyed by the scenario's own beat.)
+        if (microwaveMode || silentApproach)
             return;
 
         // Re-acquire child if it was respawned.
@@ -147,8 +166,9 @@ public class HazardZone : MonoBehaviour
         OnHazardTriggered?.Invoke();
         Debug.Log($"[HazardZone] {gameObject.name} TriggerHazard → " +
                   $"{(_neutralised ? "SUCCESS (neutralised)" : "FAIL")}", this);
-        if (_neutralised) StartCoroutine(NeutralisedSuccessSequence());
-        else              StartCoroutine(TriggerSequence());
+        if (_neutralised)       StartCoroutine(NeutralisedSuccessSequence());
+        else if (microwaveMode) StartCoroutine(MicrowaveSequence());
+        else                    StartCoroutine(TriggerSequence());
     }
 
     /// <summary>
@@ -173,6 +193,53 @@ public class HazardZone : MonoBehaviour
         if (confetti != null) confetti.Play();
         yield return new WaitForSeconds(0.5f);
         GameManager.Instance?.ReportSuccess();
+    }
+
+    /// <summary>
+    /// Microwave fail: the cat is in, the microwave runs (light on + gentle red sparks) for
+    /// <see cref="microwaveRunSeconds"/>, then the cat explodes (red burst) and the player loses.
+    /// No flashing-urgency effect — the red sparks + light convey "too late" on their own.
+    /// </summary>
+    private IEnumerator MicrowaveSequence()
+    {
+        // Running: only the light turns on (no sparks yet — the cat is still intact).
+        EnsureMicrowaveLight();
+        if (microwaveLight != null) microwaveLight.enabled = true;
+
+        yield return new WaitForSeconds(Mathf.Max(0.1f, microwaveRunSeconds));
+
+        // The cat explodes: ONE red burst (the cat's blood), only now — no buildup like the outlet.
+        // Play() FIRST: unlike the outlet, the microwave never ran proximity sparks, so the system is
+        // stopped and a bare Emit() would not simulate/render. Play + Emit guarantees the burst shows.
+        if (sparks != null)
+        {
+            sparks.Play();
+            sparks.Emit(140);
+        }
+        CameraShake.Shake(0.28f, 0.22f);
+        if (zapClip != null)
+        {
+            var src = humSource != null ? humSource : GetComponent<AudioSource>();
+            if (src != null) src.PlayOneShot(zapClip);
+        }
+
+        // Hold a beat so the explosion is clearly visible before the lose screen fades in.
+        yield return new WaitForSeconds(0.4f);
+        GameManager.Instance?.ReportFail();
+    }
+
+    private void EnsureMicrowaveLight()
+    {
+        if (microwaveLight != null) return;
+        var go = new GameObject("MicrowaveLight");
+        go.transform.SetParent(transform, false);
+        go.transform.localPosition = Vector3.zero;
+        microwaveLight = go.AddComponent<Light>();
+        microwaveLight.type = LightType.Point;
+        microwaveLight.color = new Color(1f, 0.45f, 0.2f); // warm orange-red "running" glow
+        microwaveLight.range = 2.5f;
+        microwaveLight.intensity = 3f;
+        microwaveLight.enabled = false;
     }
 
     private IEnumerator TriggerSequence()
@@ -221,6 +288,7 @@ public class HazardZone : MonoBehaviour
                 SetVisualState(normalColor, 0f);
                 if (sparks != null) sparks.Stop();
                 if (humSource != null && humSource.isPlaying) humSource.Stop();
+                if (microwaveLight != null) microwaveLight.enabled = false;
                 break;
             case GameManager.GameState.Success:
                 PlaySuccess();
@@ -240,16 +308,16 @@ public class HazardZone : MonoBehaviour
         var main = sparks.main;
         main.duration = 2f;
         main.loop = true;
-        main.startLifetime = 0.4f;
-        main.startSpeed = 1.5f;
-        main.startSize = 0.03f;
-        main.startColor = new Color(1f, 0.9f, 0.2f);
-        main.gravityModifier = -0.5f;
+        main.startLifetime = microwaveMode ? 0.7f : 0.4f;
+        main.startSpeed    = microwaveMode ? 3.2f : 1.5f;
+        main.startSize     = microwaveMode ? 0.08f : 0.03f; // chunky red splatter vs fine sparks
+        main.startColor = sparkColor;
+        main.gravityModifier = microwaveMode ? 0.7f : -0.5f; // blood falls; electric sparks rise
         var emission = sparks.emission;
         emission.rateOverTime = 0f;
         var shape = sparks.shape;
         shape.shapeType = ParticleSystemShapeType.Sphere;
-        shape.radius = 0.08f;
+        shape.radius = microwaveMode ? 0.15f : 0.08f;
         var renderer = sparks.GetComponent<ParticleSystemRenderer>();
         renderer.material = new Material(Shader.Find("Sprites/Default"));
         sparks.Stop();

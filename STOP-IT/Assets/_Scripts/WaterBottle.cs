@@ -27,6 +27,19 @@ public class WaterBottle : MonoBehaviour
     public HazardZone targetHazardZone;
     [Tooltip("Visual GameObject for the cleaning product bottle (hidden on swap; auto-found by name 'CleaningBottle' if null).")]
     public GameObject cleaningProductVisual;
+    [Tooltip("Additional cleaning-product visuals (e.g. the house's B_product* bottles + caps) hidden on swap.")]
+    public GameObject[] cleaningProductVisuals;
+
+    [Header("Extra parts")]
+    [Tooltip("Extra objects (e.g. the bottle cap) that move + hide WITH the bottle, since they aren't child renderers.")]
+    public Transform[] extraParts;
+    private Vector3[] _extraInitialPos;
+    private Vector3[] _extraOffset;
+
+    [Header("Drop placement")]
+    [Tooltip("If set, the swapped-in water lands EXACTLY here (the cleaning product's spot), base on the floor, " +
+             "instead of at the hazard centre.")]
+    public Transform dropAnchor;
 
     [Header("Interaction")]
     [Tooltip("Distance (metres) from the player camera at which pickup is allowed.")]
@@ -58,6 +71,19 @@ public class WaterBottle : MonoBehaviour
         _col = GetComponent<Collider>();
         _rb = GetComponent<Rigidbody>();
         _renderers = GetComponentsInChildren<Renderer>(includeInactive: true);
+
+        // Record extra parts (e.g. the cap) so we can hide them with the bottle and move them on the swap.
+        if (extraParts != null)
+        {
+            _extraInitialPos = new Vector3[extraParts.Length];
+            _extraOffset = new Vector3[extraParts.Length];
+            for (int i = 0; i < extraParts.Length; i++)
+            {
+                if (extraParts[i] == null) continue;
+                _extraInitialPos[i] = extraParts[i].position;
+                _extraOffset[i] = extraParts[i].position - transform.position;
+            }
+        }
     }
 
     private void Start()
@@ -135,7 +161,7 @@ public class WaterBottle : MonoBehaviour
         // Pickup prompt: visible only when the bottle is still on the table and the player is close.
         if (_pickupPrompt != null)
         {
-            bool show = !_held && Vector3.Distance(camPos, transform.position) < interactionRadius;
+            bool show = !_held && !CatGrab.PlayerCarryingCat && Vector3.Distance(camPos, transform.position) < interactionRadius;
             _pickupPrompt.SetActive(show);
             if (show) FacePrompt(_pickupPrompt, transform.position + promptOffset, camPos);
         }
@@ -150,11 +176,15 @@ public class WaterBottle : MonoBehaviour
 
     private static void FacePrompt(GameObject prompt, Vector3 worldPos, Vector3 camPos)
     {
-        prompt.transform.position = worldPos;
-        Vector3 toCam = worldPos - camPos;
-        toCam.y = 0f;
-        if (toCam.sqrMagnitude > 0.001f)
-            prompt.transform.rotation = Quaternion.LookRotation(toCam, Vector3.up);
+        // Pull the prompt toward the camera so it sits IN FRONT of walls / recessed niches
+        // (the water bottle lives in a wall niche, which was clipping the text).
+        Vector3 toCamFlat = camPos - worldPos; toCamFlat.y = 0f;
+        Vector3 pos = worldPos;
+        if (toCamFlat.sqrMagnitude > 0.04f) pos += toCamFlat.normalized * 0.45f;
+        prompt.transform.position = pos;
+        Vector3 face = pos - camPos; face.y = 0f;
+        if (face.sqrMagnitude > 0.001f)
+            prompt.transform.rotation = Quaternion.LookRotation(face, Vector3.up);
     }
 
     /// <summary>
@@ -164,8 +194,10 @@ public class WaterBottle : MonoBehaviour
     public bool TryPickup(Transform _ /* hand unused */)
     {
         if (_held) return false;
+        if (CatGrab.PlayerCarryingCat) return false; // S3 gate: drop the cat in its basket first
         _held = true;
         SetVisible(false);
+        SetExtraPartsActive(false); // hide the cap too
         if (_col != null) _col.enabled = false;
         if (pickupIndicator != null) pickupIndicator.SetActive(false);
         if (_pickupPrompt != null) _pickupPrompt.SetActive(false);
@@ -181,14 +213,36 @@ public class WaterBottle : MonoBehaviour
     public bool TryDropAt(HazardZone zone)
     {
         if (!_held || zone == null) return false;
+        if (ChildNPC.S3ProductGrabbed) return false; // too late — the toddler already has the poison in hand
         if (!zone.gameObject.name.Equals(targetHazardName, System.StringComparison.OrdinalIgnoreCase))
             return false;
 
         _held = false;
-        Vector3 dropPos = zone.transform.position + Vector3.up * 0.15f;
-        transform.position = dropPos;
         transform.rotation = Quaternion.identity;
         SetVisible(true);
+        // Land EXACTLY where the cleaning product was (dropAnchor), base on the floor; else the hazard centre.
+        Vector3 dropPos;
+        if (dropAnchor != null)
+        {
+            transform.position = new Vector3(dropAnchor.position.x, transform.position.y, dropAnchor.position.z);
+            var rends = GetComponentsInChildren<Renderer>(true);
+            if (rends.Length > 0)
+            {
+                Bounds bb = rends[0].bounds; for (int i = 1; i < rends.Length; i++) if (rends[i] != null) bb.Encapsulate(rends[i].bounds);
+                transform.position += new Vector3(0f, 0f - bb.min.y, 0f); // rest the base on the floor (y = 0)
+            }
+            dropPos = transform.position;
+        }
+        else
+        {
+            dropPos = zone.transform.position + Vector3.up * 0.15f;
+            transform.position = dropPos;
+        }
+        // Move the cap (extra parts) with the bottle, then show them.
+        if (extraParts != null)
+            for (int i = 0; i < extraParts.Length; i++)
+                if (extraParts[i] != null) extraParts[i].position = dropPos + _extraOffset[i];
+        SetExtraPartsActive(true);
         if (_col != null) _col.enabled = true;
         if (_swapPrompt != null) _swapPrompt.SetActive(false);
 
@@ -208,6 +262,11 @@ public class WaterBottle : MonoBehaviour
         transform.position = _initialPos;
         transform.rotation = _initialRot;
         SetVisible(true);
+        // Restore the cap (extra parts) to their initial pose.
+        if (extraParts != null)
+            for (int i = 0; i < extraParts.Length; i++)
+                if (extraParts[i] != null) extraParts[i].position = _extraInitialPos[i];
+        SetExtraPartsActive(true);
         if (_col != null) _col.enabled = true;
         if (_rb != null) { _rb.isKinematic = true; _rb.useGravity = false; }
         if (pickupIndicator != null) pickupIndicator.SetActive(true);
@@ -219,6 +278,9 @@ public class WaterBottle : MonoBehaviour
     private void SetCleaningProductsVisible(bool on)
     {
         if (cleaningProductVisual != null) cleaningProductVisual.SetActive(on);
+        if (cleaningProductVisuals != null)
+            foreach (var g in cleaningProductVisuals)
+                if (g != null) g.SetActive(on);
         if (_hazardRenderers != null)
             foreach (var r in _hazardRenderers)
                 if (r != null) r.enabled = on;
@@ -229,6 +291,12 @@ public class WaterBottle : MonoBehaviour
         if (_renderers == null) return;
         for (int i = 0; i < _renderers.Length; i++)
             if (_renderers[i] != null) _renderers[i].enabled = on;
+    }
+
+    private void SetExtraPartsActive(bool on)
+    {
+        if (extraParts == null) return;
+        foreach (var p in extraParts) if (p != null) p.gameObject.SetActive(on);
     }
 
     private void OnDisable()

@@ -22,3 +22,8 @@ STOP-IT/Assets/_Recovery/
 
 # Captures de rendu de l'outil ArtSkin (artefacts de dev, hors Assets)
 STOP-IT/ArtCaptures/
+
+# Blender working exports (source/intermediaire, hors Assets Unity)
+/Exports/
+# Log de dev de StoryModeSetup
+STOP-IT/StoryModeSetup.log

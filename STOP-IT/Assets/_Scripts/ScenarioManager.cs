@@ -43,6 +43,34 @@ public class ScenarioManager : MonoBehaviour
         [Tooltip("Local Euler angles of the carried item relative to the NPC root.")]
         public Vector3 carriedItemLocalEuler;
 
+        [Header("Pickup waypoint (optional)")]
+        [Tooltip("If set, the child first walks HERE, picks up pickupItem, THEN walks to the hazard " +
+                 "(fork on the floor, cat in its bed, skateboard…). Leave null to walk straight to the hazard.")]
+        public Transform pickupWaypoint;
+        [Tooltip("Item attached to the child upon reaching the pickup waypoint.")]
+        public GameObject pickupItem;
+        [Tooltip("Local position of the picked-up item relative to the NPC root.")]
+        public Vector3 pickupItemLocalPosition = new Vector3(0.12f, 0.48f, 0.22f);
+        [Tooltip("Local Euler angles of the picked-up item relative to the NPC root.")]
+        public Vector3 pickupItemLocalEuler;
+
+        [Header("Cleaning products (scenario 3)")]
+        [Tooltip("Cleaning-product objects; on arrival the child grabs the nearest visible one into its hand to drink it.")]
+        public GameObject[] cleaningProducts;
+        [Tooltip("Local position of the grabbed cleaning product in the child's hand.")]
+        public Vector3 cleaningItemLocalPosition = new Vector3(0f, 0f, 0.04f);
+        [Tooltip("Local Euler of the grabbed cleaning product in the child's hand.")]
+        public Vector3 cleaningItemLocalEuler;
+
+        [Header("Lose screen")]
+        [Tooltip("Home-safety prevention message shown on the lose screen when THIS scenario fails.")]
+        [TextArea(2, 4)]
+        public string loseMessage;
+        [Tooltip("Seconds to wait after a fail (let the fail beat play out) before the lose screen appears. " +
+                 "Electrocution ≈ 2.5; microwave ≈ 0.1 (the 2s run already happened inside the hazard, so the " +
+                 "red explosion lands right as 'TROP TARD' fades in).")]
+        public float failScreenDelay = 2.5f;
+
         [Tooltip("If true, the child can't be saved by grabbing/touching them this scenario — " +
                  "the player must use the scenario verb instead (take the cat, close the window). " +
                  "Left false on every existing scenario (grab/touch stays allowed); set true for " +
@@ -231,6 +259,10 @@ public class ScenarioManager : MonoBehaviour
             childNPC.SetCarriedItem(config.carriedItem,
                                     config.carriedItemLocalPosition,
                                     config.carriedItemLocalEuler);
+            childNPC.SetPickup(config.pickupWaypoint, config.pickupItem,
+                               config.pickupItemLocalPosition, config.pickupItemLocalEuler);
+            childNPC.SetCleaningProducts(config.cleaningProducts,
+                                         config.cleaningItemLocalPosition, config.cleaningItemLocalEuler);
         }
         if (config.waterBottle != null)
             config.waterBottle.ResetBottle();
@@ -243,6 +275,9 @@ public class ScenarioManager : MonoBehaviour
             scenarioUI.SetScenarioName(config.scenarioName);
             scenarioUI.SetActionHint(config.actionHint);
         }
+
+        // Story progress in the score slot: "(current scenario)/(total)".
+        GameManager.Instance?.OnScoreUpdated?.Invoke(index + 1, ScenarioCount);
 
         // Notify subscribers (DangerVignette, HazardIndicator, custom listeners)
         OnScenarioActivated?.Invoke(config);
