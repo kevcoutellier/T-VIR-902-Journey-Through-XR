@@ -36,6 +36,11 @@ public class WaterBottle : MonoBehaviour
     private Vector3[] _extraInitialPos;
     private Vector3[] _extraOffset;
 
+    [Header("Drop placement")]
+    [Tooltip("If set, the swapped-in water lands EXACTLY here (the cleaning product's spot), base on the floor, " +
+             "instead of at the hazard centre.")]
+    public Transform dropAnchor;
+
     [Header("Interaction")]
     [Tooltip("Distance (metres) from the player camera at which pickup is allowed.")]
     public float interactionRadius = 1.5f;
@@ -208,14 +213,31 @@ public class WaterBottle : MonoBehaviour
     public bool TryDropAt(HazardZone zone)
     {
         if (!_held || zone == null) return false;
+        if (ChildNPC.S3ProductGrabbed) return false; // too late — the toddler already has the poison in hand
         if (!zone.gameObject.name.Equals(targetHazardName, System.StringComparison.OrdinalIgnoreCase))
             return false;
 
         _held = false;
-        Vector3 dropPos = zone.transform.position + Vector3.up * 0.15f;
-        transform.position = dropPos;
         transform.rotation = Quaternion.identity;
         SetVisible(true);
+        // Land EXACTLY where the cleaning product was (dropAnchor), base on the floor; else the hazard centre.
+        Vector3 dropPos;
+        if (dropAnchor != null)
+        {
+            transform.position = new Vector3(dropAnchor.position.x, transform.position.y, dropAnchor.position.z);
+            var rends = GetComponentsInChildren<Renderer>(true);
+            if (rends.Length > 0)
+            {
+                Bounds bb = rends[0].bounds; for (int i = 1; i < rends.Length; i++) if (rends[i] != null) bb.Encapsulate(rends[i].bounds);
+                transform.position += new Vector3(0f, 0f - bb.min.y, 0f); // rest the base on the floor (y = 0)
+            }
+            dropPos = transform.position;
+        }
+        else
+        {
+            dropPos = zone.transform.position + Vector3.up * 0.15f;
+            transform.position = dropPos;
+        }
         // Move the cap (extra parts) with the bottle, then show them.
         if (extraParts != null)
             for (int i = 0; i < extraParts.Length; i++)

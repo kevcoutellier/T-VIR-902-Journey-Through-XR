@@ -120,7 +120,8 @@ public static class StoryModeSetup
         var pickupS2 = CreateMarker("PickupWaypoint_S2", catBedPos, story.transform); // repositioned in front of the bed after snap
         var catBed   = SetupCatBed(catBedPos, story.transform);
         var cat      = SetupCat(catBedPos + Vector3.up * 0.08f, hazardMicro, story.transform);
-        var catCg = cat.GetComponent<CatGrab>(); if (catCg != null) catCg.basket = catBed.transform; // drop-the-cat target (S2→S3)
+        var catCg = cat.GetComponent<CatGrab>();
+        if (catCg != null) { catCg.basket = catBed.transform; catCg.afterDropActionHint = "REMPLACE LE PRODUIT PAR L'EAU !"; } // drop target + post-drop hint
         L("step 3b OK — scenario 2 props (microwave hazard, cat bed, cat, spawn, pickup)");
 
         // 3c. Scenario 3 props — bathroom. REUSE the house's existing cleaning products (foot of the sink)
@@ -131,11 +132,12 @@ public static class StoryModeSetup
 
         // Existing cleaning products: 3 bottles + caps at the foot of Prop_Sink_02.
         var productObjs = new List<GameObject>();
+        var productBodies = new List<GameObject>();
         Vector3 prodSum = Vector3.zero; int prodN = 0;
         foreach (var pn in new[] { "B_product1_body", "B_product1_cap", "B_product2_body", "B_product2_cap", "B_product3_body", "B_product3_cap" })
         {
             var g = GameObject.Find(pn);
-            if (g != null) { productObjs.Add(g); if (pn.EndsWith("_body")) { prodSum += g.transform.position; prodN++; } }
+            if (g != null) { productObjs.Add(g); if (pn.EndsWith("_body")) { productBodies.Add(g); prodSum += g.transform.position; prodN++; } }
         }
         Vector3 productsCentroid = prodN > 0 ? prodSum / prodN : new Vector3(-1.12f, 0.13f, -4.05f);
         var hazardClean = CreateHazard("HazardZone_CleaningProduct", "Cleaning Product",
@@ -162,6 +164,35 @@ public static class StoryModeSetup
         else L("[StoryModeSetup] WARNING: B_waterbottle_body not found — S3 has no water bottle to swap.");
 
         var spawnS3 = CreateMarker("SpawnChild_S3", new Vector3(-3.20f, 0f, -6.00f), story.transform);
+        // Recolour the products (the drunk one GREEN like the death; others non-blue so they don't look
+        // like water) and sit them flush on the floor (the back two were floating).
+        RecolorGround("B_product2_body", "B_product2_cap", new Color(0.35f, 0.80f, 0.20f)); // GREEN — the bottle the baby drinks
+        RecolorGround("B_product1_body", "B_product1_cap", new Color(0.95f, 0.50f, 0.10f)); // orange
+        RecolorGround("B_product3_body", "B_product3_cap", new Color(0.60f, 0.25f, 0.75f)); // purple
+        var greenBottle = GameObject.Find("B_product2_body"); // force the baby to drink THIS (green) one
+        if (water != null && greenBottle != null) water.dropAnchor = greenBottle.transform; // water lands exactly on the green product's spot
+        // Match the water bottle's size to the green product (it was a touch bigger/wider → offset in the hand).
+        if (water != null && greenBottle != null)
+        {
+            var wr = water.GetComponentInChildren<Renderer>();
+            var pr = greenBottle.GetComponentInChildren<Renderer>();
+            if (wr != null && pr != null)
+            {
+                Vector3 ws = wr.bounds.size, ps = pr.bounds.size, bc = wr.bounds.center;
+                float sx = ps.x / Mathf.Max(1e-4f, ws.x), sy = ps.y / Mathf.Max(1e-4f, ws.y), sz = ps.z / Mathf.Max(1e-4f, ws.z);
+                var bs = water.transform.localScale;
+                water.transform.localScale = new Vector3(bs.x * sx, bs.y * sy, bs.z * sz);
+                var wcapS = GameObject.Find("B_waterbottle_cap"); // scale + reseat the cap on the (smaller) neck
+                if (wcapS != null)
+                {
+                    var cs = wcapS.transform.localScale;
+                    wcapS.transform.localScale = new Vector3(cs.x * sx, cs.y * sy, cs.z * sz);
+                    Vector3 rel = wcapS.transform.position - bc;
+                    wcapS.transform.position = bc + new Vector3(rel.x * sx, rel.y * sy, rel.z * sz);
+                }
+                L($"[StoryModeSetup] water bottle scaled to product size ({sx:F2},{sy:F2},{sz:F2}).");
+            }
+        }
         L($"step 3c OK — S3 wired to {productObjs.Count} existing product objects (centroid {productsCentroid}) + existing water bottle.");
 
         // 4. UI + EventSystem + lose screen
@@ -214,12 +245,15 @@ public static class StoryModeSetup
         var cfg3 = new ScenarioManager.ScenarioConfig
         {
             scenarioName     = "Salle de bain — Les produits ménagers",
-            actionHint       = "REMPLACE LE PRODUIT PAR L'EAU !",
-            childSpawnPoint  = spawnS3.transform, // known reliable start (the S2 cat-take doesn't drop the baby anywhere specific)
+            actionHint       = "REPOSE LE CHAT DANS SON PANIER !", // becomes "REMPLACE LE PRODUIT PAR L'EAU !" once the cat is dropped
+            childSpawnPoint  = null,                  // NO teleport — the baby walks from where it lost the cat to the products
             hazardZone       = hazardClean,
             playerSpawnPoint = null,
             scenarioObjects  = new GameObject[0],
             waterBottle      = water,                // ScenarioManager resets it on (re)activation
+            cleaningProducts = greenBottle != null ? new[] { greenBottle } : productBodies.ToArray(), // grab the GREEN bottle (matches the green death)
+            cleaningItemLocalPosition = new Vector3(0f, 0.02f, 0.05f),  // in-hand pose (tune)
+            cleaningItemLocalEuler    = new Vector3(0f, 0f, 0f),        // upright, cap on top (was 180 = upside-down once the cap showed)
             disableDirectChildSave = true,           // must swap the bottle, not grab the baby
             loseMessage = "Les produits ménagers sont toxiques : un enfant peut en boire en un instant.\n" +
                           "Range-les en hauteur, fermés et hors de portée des enfants.",
@@ -268,7 +302,7 @@ public static class StoryModeSetup
         VerifyPath("S1 fork -> outlet", fork.transform.position, hazardOutlet.transform.position);
         VerifyPath("S2 spawn -> cat", spawnS2.transform.position, cat.transform.position);
         VerifyPath("S2 cat -> microwave", cat.transform.position, hazardMicro.transform.position);
-        VerifyPath("S3 spawn -> products", spawnS3.transform.position, hazardClean.transform.position);
+        VerifyPath("S3 microwave -> products", hazardMicro.transform.position, hazardClean.transform.position); // baby continues from ~the microwave (no teleport)
         if (waterGO != null) VerifyPath("S3 water -> products", waterGO.transform.position, hazardClean.transform.position);
 
         EditorUtility.SetDirty(gm);
@@ -353,9 +387,9 @@ public static class StoryModeSetup
         if (pickClip != null) { var p = so.FindProperty("pickupAttachDelay");   if (p != null) p.floatValue = pickClip.length * 0.35f; } // fork/cat transfers to hand ~35% in (the grab)
         if (putClip  != null) { var p = so.FindProperty("putForkAnimDuration"); if (p != null) p.floatValue = putClip.length * 0.25f; } // ~1/4 then the zap
         if (putCatClip != null) { var p = so.FindProperty("putCatAnimDuration"); if (p != null) p.floatValue = putCatClip.length * 0.7f; } // most of the put-cat anim, then it runs
-        var drinkClip = FindClip(AnimDir + "SittingDrinkingBaby.fbx");
+        var drinkClip = FindClip(AnimDir + "DrinkingBaby.fbx");
         var dieClip   = FindClip(AnimDir + "DyingBackwardsBaby.fbx");
-        if (drinkClip != null) { var p = so.FindProperty("drinkAnimDuration"); if (p != null) p.floatValue = drinkClip.length; }        // full sit + drink (= the swap window)
+        if (drinkClip != null) { var p = so.FindProperty("drinkAnimDuration"); if (p != null) p.floatValue = drinkClip.length; } // let the FULL drink play, then the death
         if (dieClip   != null) { var p = so.FindProperty("dieAnimDuration");   if (p != null) p.floatValue = dieClip.length * 0.9f; }   // most of the death, then the loss
         so.ApplyModifiedProperties();
 
@@ -382,8 +416,8 @@ public static class StoryModeSetup
         var pick  = ImportAndGetClip(AnimDir + "PickingUpCatBaby.fbx", false);
         var put   = ImportAndGetClip(AnimDir + "PutForkInBaby.fbx", false);
         var putcat = ImportAndGetClip(AnimDir + "PuttingUpTheCatBaby.fbx", false);
-        var drink = ImportAndGetClip(AnimDir + "SittingDrinkingBaby.fbx", false);
-        var die   = ImportAndGetClip(AnimDir + "DyingBackwardsBaby.fbx", false);
+        var drink = ImportAndGetClip(AnimDir + "DrinkingBaby.fbx", false);
+        var die   = ImportAndGetClip(AnimDir + "DyingBackwardsBaby.fbx", false, feetGrounded: false); // fall flat, not feet-planted
         var elec  = ImportAndGetClip(AnimDir + "BeingElectrocutedBaby.fbx", false);
         var surp  = ImportAndGetClip(AnimDir + "SurprisedBaby.fbx", false);
         var carry = ImportAndGetClip(AnimDir + "BeingCarriedBaby.fbx", true);
@@ -451,7 +485,7 @@ public static class StoryModeSetup
     }
 
     /// <summary>Import an animation FBX (Generic, looped or one-shot) and return its first AnimationClip.</summary>
-    private static AnimationClip ImportAndGetClip(string path, bool loop)
+    private static AnimationClip ImportAndGetClip(string path, bool loop, bool feetGrounded = true)
     {
         var imp = AssetImporter.GetAtPath(path) as ModelImporter;
         if (imp != null)
@@ -460,7 +494,7 @@ public static class StoryModeSetup
             bool ok = imp.animationType == ModelImporterAnimationType.Human && imp.importAnimation
                       && imp.avatarSetup == ModelImporterAvatarSetup.CreateFromThisModel
                       && existing != null && existing.Length > 0 && existing[0].loopTime == loop
-                      && existing[0].lockRootHeightY;
+                      && existing[0].lockRootHeightY && existing[0].heightFromFeet == feetGrounded;
             if (!ok)
             {
                 // Humanoid: with applyRootMotion=false the root motion is ignored → clips play in
@@ -476,7 +510,8 @@ public static class StoryModeSetup
                     defs[i].lockRootPositionXZ = true;
                     defs[i].keepOriginalPositionXZ = true;
                     defs[i].lockRootHeightY = true;   // bake Y into the pose
-                    defs[i].heightFromFeet = true;    // Based Upon = Feet → no floating during crouch/reach
+                    defs[i].heightFromFeet = feetGrounded;       // Feet for crouch/reach; Original for the death fall
+                    defs[i].keepOriginalPositionY = !feetGrounded;
                 }
                 imp.clipAnimations = defs;
                 imp.SaveAndReimport();
@@ -591,6 +626,34 @@ public static class StoryModeSetup
         FitMaxDimension(bed, 0.55f);
         foreach (var c in bed.GetComponentsInChildren<Collider>(true)) c.enabled = false; // decorative; don't block navmesh
         return bed;
+    }
+
+    private static Material MakeColorMat(Color c)
+    {
+        var sh = Shader.Find("Universal Render Pipeline/Lit");
+        if (sh == null) sh = Shader.Find("Standard");
+        var m = new Material(sh) { color = c };
+        if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", c);
+        return m;
+    }
+
+    /// <summary>Recolours a product body and sits it (+ its cap) flush on the floor (y=0). The drunk bottle
+    /// is GREEN (to match the green death); the others get distinct non-blue colours.</summary>
+    private static void RecolorGround(string bodyName, string capName, Color color)
+    {
+        var body = GameObject.Find(bodyName);
+        if (body == null) return;
+        var mr = body.GetComponent<MeshRenderer>();
+        if (mr != null) mr.sharedMaterial = MakeColorMat(color);
+        var cap = GameObject.Find(capName);
+        var rends = body.GetComponentsInChildren<Renderer>();
+        if (rends.Length > 0)
+        {
+            Bounds b = rends[0].bounds; for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
+            float dy = -b.min.y; // drop so the bottle's base rests on the floor (y = 0)
+            body.transform.position += new Vector3(0f, dy, 0f);
+            if (cap != null) cap.transform.position += new Vector3(0f, dy, 0f);
+        }
     }
 
     private static ScenarioUI SetupCanvasUI(Transform parent)

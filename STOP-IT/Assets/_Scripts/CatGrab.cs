@@ -45,6 +45,8 @@ public class CatGrab : MonoBehaviour, IProximityInteractable
     public float basketDropRadius = 1.8f;
     [Tooltip("Prompt shown while carrying the cat, near the basket. {KEY} = active input.")]
     public string dropPromptText = "Appuie sur {KEY} pour déposer le chat dans le panier";
+    [Tooltip("Action hint revealed once the cat is dropped in its basket (the real next-step instruction, e.g. 'REMPLACE LE PRODUIT PAR L'EAU !').")]
+    public string afterDropActionHint = "";
 
     private bool _armed;
     private bool _taken;
@@ -218,6 +220,12 @@ public class CatGrab : MonoBehaviour, IProximityInteractable
         RestoreToHome();   // the cat's home IS the basket (bed) — seats it back exactly
         SetVisible(true);
         if (_dropPrompt != null) _dropPrompt.SetActive(false);
+        // Now reveal the real scenario instruction (e.g. "REMPLACE LE PRODUIT PAR L'EAU !").
+        if (!string.IsNullOrEmpty(afterDropActionHint))
+        {
+            var ui = FindAnyObjectByType<ScenarioUI>();
+            if (ui != null) ui.SetActionHint(afterDropActionHint);
+        }
         Debug.Log("[CatGrab] Cat dropped in its basket.", this);
     }
 

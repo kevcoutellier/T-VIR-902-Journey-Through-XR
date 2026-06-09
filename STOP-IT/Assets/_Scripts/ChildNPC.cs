@@ -116,6 +116,8 @@ public class ChildNPC : MonoBehaviour
     private bool _isMoving = false;
     private Renderer[] _bodyRenderers;
     private MaterialPropertyBlock _tintMpb;
+    private Coroutine _arrivalRoutine; // current pickup / hazard-arrival beat; cancelled on any scenario change
+    public static bool S3ProductGrabbed; // true once the toddler has the poison bottle in hand → swap deadline passed
     private bool _isStopped = false;
     private bool _held = false;
     private bool _forceWalkNow = false;
@@ -155,10 +157,13 @@ public class ChildNPC : MonoBehaviour
     [SerializeField] private float putForkAnimDuration = 1.0f;
     [Tooltip("Pause (s) at the microwave while the PutCat animation plays before the cat is placed inside.")]
     [SerializeField] private float putCatAnimDuration = 1.0f;
-    [Tooltip("Pause (s) at the cleaning products while the sit-and-drink animation plays (the swap window).")]
+    [Tooltip("Pause (s) at the cleaning products while the drink animation plays (the swap window).")]
     [SerializeField] private float drinkAnimDuration = 3.0f;
     [Tooltip("Pause (s) for the poisoned death animation before the loss is reported.")]
     [SerializeField] private float dieAnimDuration = 2.0f;
+    private GameObject[] _s3Products;
+    private Vector3 _s3ItemLocalPos = new Vector3(0f, 0f, 0.04f);
+    private Vector3 _s3ItemLocalEuler;
     [Tooltip("When (s into the pickup) the item transfers from the floor to the hand — the 'grab' moment (~half the clip).")]
     [SerializeField] private float pickupAttachDelay = 0.65f;
 
@@ -339,13 +344,13 @@ public class ChildNPC : MonoBehaviour
                     // Arrived at the pickup waypoint: play the PickUp animation, then attach & continue.
                     _walkingToPickup = false;
                     _isMoving = false;
-                    StartCoroutine(PickupRoutine());
+                    _arrivalRoutine = StartCoroutine(PickupRoutine());
                 }
                 else
                 {
                     // Arrived at the hazard: play the PutFork beat, then the zap / fail.
                     _isMoving = false;
-                    StartCoroutine(HazardArrivalRoutine());
+                    _arrivalRoutine = StartCoroutine(HazardArrivalRoutine());
                 }
             }
         }
@@ -532,7 +537,7 @@ public class ChildNPC : MonoBehaviour
     /// skateboard under the feet in scenario 4…). Passing `null` releases the
     /// previously carried item back to its original parent / pose.
     /// </summary>
-    public void SetCarriedItem(GameObject item, Vector3 localPos, Vector3 localEuler)
+    public void SetCarriedItem(GameObject item, Vector3 localPos, Vector3 localEuler, bool useLeftHand = false)
     {
         // Restore previously carried item to its original transform.
         if (_carriedItem != null)
@@ -555,7 +560,7 @@ public class ChildNPC : MonoBehaviour
         _carriedItemWasActive         = item.activeSelf;
         Vector3 worldScale = item.transform.lossyScale;
 
-        Transform attach = GetCarryAttach();
+        Transform attach = GetCarryAttach(useLeftHand);
         item.transform.SetParent(attach, worldPositionStays: false);
         item.transform.localPosition = localPos;
         item.transform.localRotation = Quaternion.Euler(localEuler);
@@ -579,11 +584,11 @@ public class ChildNPC : MonoBehaviour
 
     /// <summary>The transform a carried item attaches to: the right-hand bone (so the item follows
     /// the arm during walk/pickup), falling back to the NPC root if no Humanoid hand is available.</summary>
-    private Transform GetCarryAttach()
+    private Transform GetCarryAttach(bool useLeftHand = false)
     {
         if (animator != null && animator.isHuman)
         {
-            var hand = animator.GetBoneTransform(HumanBodyBones.RightHand);
+            var hand = animator.GetBoneTransform(useLeftHand ? HumanBodyBones.LeftHand : HumanBodyBones.RightHand);
             if (hand != null) return hand;
         }
         return transform;
@@ -609,6 +614,38 @@ public class ChildNPC : MonoBehaviour
         _pickupItemLocalPos = localPos;
         _pickupItemLocalEuler = localEuler;
         _walkingToPickup = waypoint != null && item != null;
+    }
+
+    /// <summary>Scenario 3: the cleaning products the child can grab + drink. On arrival it grabs the
+    /// nearest VISIBLE one into its hand (so the drink reads as drinking the product).</summary>
+    public void SetCleaningProducts(GameObject[] products, Vector3 localPos, Vector3 localEuler)
+    {
+        _s3Products = products;
+        _s3ItemLocalPos = localPos;
+        _s3ItemLocalEuler = localEuler;
+    }
+
+    private GameObject NearestVisibleProduct()
+    {
+        if (_s3Products == null) return null;
+        GameObject best = null; float bestSqr = float.MaxValue;
+        foreach (var p in _s3Products)
+        {
+            if (p == null || !p.activeInHierarchy) continue;
+            float sqr = (p.transform.position - transform.position).sqrMagnitude;
+            if (sqr < bestSqr) { bestSqr = sqr; best = p; }
+        }
+        return best;
+    }
+
+    /// <summary>Parents a product's cap (B_product*_body → B_product*_cap) under its body so the cap stays
+    /// attached to the bottle as the child grabs + drinks it (it keeps its world pose on the neck and
+    /// follows the bottle into the hand). The bottle reads as a real, closed product bottle.</summary>
+    private void AttachProductCap(GameObject body)
+    {
+        if (body == null || !body.name.EndsWith("_body")) return;
+        var cap = GameObject.Find(body.name.Substring(0, body.name.Length - 5) + "_cap");
+        if (cap != null) cap.transform.SetParent(body.transform, worldPositionStays: true);
     }
 
     /// <summary>Current navigation leg target: the pickup waypoint until reached, then the hazard.</summary>
@@ -692,23 +729,61 @@ public class ChildNPC : MonoBehaviour
         }
         else if (isCleaningProduct)
         {
-            Debug.Log($"[ChildNPC] S3 arrival — drinking at {transform.position}; hazard '{(targetHazard!=null?targetHazard.hazardName:"<null>")}' at {(targetHazard!=null?targetHazard.transform.position.ToString():"<null>")}", this);
-            // Sit and drink whatever is at the spot (poison OR — if the player swapped in time — water).
-            if (animator != null)
+            Debug.Log($"[ChildNPC] S3 arrival at {transform.position}; hazard '{(targetHazard!=null?targetHazard.hazardName:"<null>")}' at {(targetHazard!=null?targetHazard.transform.position.ToString():"<null>")}", this);
+            // Reach down to grab whatever is there (PickUp/“ramasse” anim). The DEADLINE to swap is the grab
+            // moment (~35% in, pickupAttachDelay): swap before that and the child picks up the WATER instead
+            // of the poison, into the LEFT hand (the drink animation drinks with the left hand).
+            if (animator != null) animator.SetTrigger(AnimPickUp);
+            yield return new WaitForSeconds(pickupAttachDelay);
+            if (_held || _isStopped) yield break;
+
+            bool swapped = targetHazard != null && targetHazard.IsNeutralised; // checked NOW (the grab), not at arrival
+            if (swapped)
             {
-                animator.SetTrigger(AnimDrink);
-                yield return new WaitForSeconds(drinkAnimDuration);
-                if (_held || _isStopped) yield break;
+                var wb = FindAnyObjectByType<WaterBottle>();
+                if (wb != null)
+                {
+                    AttachProductCap(wb.gameObject); // carry the water cap along (B_waterbottle_body → _cap)
+                    SetCarriedItem(wb.gameObject, _s3ItemLocalPos, _s3ItemLocalEuler, useLeftHand: true);
+                }
             }
-            // The swap is allowed right up to the end of the drink: if neutralised, it was water → win.
-            if (targetHazard != null && targetHazard.IsNeutralised)
+            else
             {
-                targetHazard.TriggerHazard(); // → NeutralisedSuccessSequence → ReportSuccess
+                var prod = NearestVisibleProduct();
+                if (prod != null)
+                {
+                    AttachProductCap(prod);
+                    SetCarriedItem(prod, _s3ItemLocalPos, _s3ItemLocalEuler, useLeftHand: true);
+                    S3ProductGrabbed = true; // swap window now closed — a later swap is too late
+                }
+            }
+            yield return new WaitForSeconds(Mathf.Max(0f, pickupAnimDuration - pickupAttachDelay));
+            if (_held || _isStopped) yield break;
+
+            // Drink it FULLY (water or poison).
+            if (animator != null) animator.SetTrigger(AnimDrink);
+            yield return new WaitForSeconds(drinkAnimDuration);
+            if (_held || _isStopped) yield break;
+
+            if (swapped)
+            {
+                // Drank WATER → safe. Release the bottle (its own ResetBottle restores it next round), then win.
+                ForgetCarriedItem();
+                if (targetHazard != null) targetHazard.TriggerHazard(); // → NeutralisedSuccessSequence → ReportSuccess
                 yield break;
             }
-            // Poison: the toddler turns green and collapses backwards, then we lose.
+
+            // Poison: the toddler turns green and collapses, then we lose. Force the Die state directly
+            // (animator.Play) so a lingering Drink/PickUp transition can't keep the drinking pose on screen.
             SetPoisonTint(true);
-            if (animator != null) animator.SetTrigger(AnimDie);
+            if (animator != null)
+            {
+                animator.ResetTrigger(AnimPickUp);
+                animator.ResetTrigger(AnimDrink);
+                animator.SetTrigger(AnimDie);
+                animator.Play("Die", 0, 0f);
+            }
+            Debug.Log("[ChildNPC] S3 death — forcing Die (DyingBackwards), then game over.", this);
             _isStopped = true;
             _isMoving = false;
             if (_agent != null && _agent.isActiveAndEnabled && _agent.isOnNavMesh) _agent.isStopped = true;
@@ -1066,6 +1141,11 @@ public class ChildNPC : MonoBehaviour
 
     private void OnGameStateChanged(GameManager.GameState state)
     {
+        // Cancel any in-flight arrival beat (interrupted pickup / PutCat / PutFork…). Without this, a
+        // coroutine from the PREVIOUS scenario can finish its wait and call TriggerHazard() on the NOW-CURRENT
+        // targetHazard — e.g. grabbing the cat mid-PutCat won S2 but then triggered the S3 hazard (phantom loss).
+        if (_arrivalRoutine != null) { StopCoroutine(_arrivalRoutine); _arrivalRoutine = null; }
+
         if (state != GameManager.GameState.Playing)
         {
             _isMoving = false;
@@ -1095,6 +1175,7 @@ public class ChildNPC : MonoBehaviour
             StopActiveReaction();
             ResetAnimatorToIdle();   // snap out of Electrocute/etc. if the player retried mid-animation
             SetPoisonTint(false);    // clear the green poison tint from a previous S3 death
+            S3ProductGrabbed = false; // re-open the swap window for the new round
             _walkPhase = 0f;
             _walkWeight = 0f;
 
