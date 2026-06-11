@@ -147,6 +147,8 @@ public class ChildNPC : MonoBehaviour
     private static readonly int AnimPutCat = Animator.StringToHash("PutCat");
     private static readonly int AnimDrink = Animator.StringToHash("Drink");
     private static readonly int AnimDie = Animator.StringToHash("Die");
+    private static readonly int AnimJumpSkate = Animator.StringToHash("JumpSkate");
+    private static readonly int AnimFallDeath = Animator.StringToHash("FallDeath");
     private static readonly int AnimSurprised = Animator.StringToHash("Surprised");
     private static readonly int AnimCarried = Animator.StringToHash("Carried");
 
@@ -161,6 +163,11 @@ public class ChildNPC : MonoBehaviour
     [SerializeField] private float drinkAnimDuration = 3.0f;
     [Tooltip("Pause (s) for the poisoned death animation before the loss is reported.")]
     [SerializeField] private float dieAnimDuration = 2.0f;
+    [Tooltip("Pause (s) for the jump-onto-skateboard animation before the ride starts.")]
+    [SerializeField] private float jumpSkateDuration = 1.0f;
+    [Tooltip("Pause (s) for the wall-hit death animation before the loss is reported.")]
+    [SerializeField] private float fallDeathDuration = 2.0f;
+    private SkateboardRide _skateboardRide;
     private GameObject[] _s3Products;
     private Vector3 _s3ItemLocalPos = new Vector3(0f, 0f, 0.04f);
     private Vector3 _s3ItemLocalEuler;
@@ -625,6 +632,25 @@ public class ChildNPC : MonoBehaviour
         _s3ItemLocalEuler = localEuler;
     }
 
+    /// <summary>Scenario 4: the skateboard the child rides down the stairs (set on activation).</summary>
+    public void SetSkateboard(SkateboardRide ride) { _skateboardRide = ride; }
+
+    /// <summary>Called by SkateboardRide when the toddler reaches the bottom of the stairs UNCAUGHT:
+    /// it slams the wall, falls backwards, and we lose.</summary>
+    public void HitWallDeath()
+    {
+        if (_isStopped) return;
+        StartCoroutine(HitWallDeathRoutine());
+    }
+    private IEnumerator HitWallDeathRoutine()
+    {
+        _isStopped = true;
+        _isMoving = false;
+        if (animator != null) { animator.SetTrigger(AnimFallDeath); animator.Play("FallDeath", 0, 0f); }
+        yield return new WaitForSeconds(fallDeathDuration);
+        GameManager.Instance?.ReportFail();
+    }
+
     private GameObject NearestVisibleProduct()
     {
         if (_s3Products == null) return null;
@@ -701,6 +727,7 @@ public class ChildNPC : MonoBehaviour
         bool isOutlet = hzName == "Electrical Outlet";
         bool isMicrowave = hzName == "Microwave";
         bool isCleaningProduct = hzName == "Cleaning Product";
+        bool isSkateboard = hzName == "Skateboard";
 
         if (isOutlet)
         {
@@ -789,6 +816,20 @@ public class ChildNPC : MonoBehaviour
             if (_agent != null && _agent.isActiveAndEnabled && _agent.isOnNavMesh) _agent.isStopped = true;
             yield return new WaitForSeconds(dieAnimDuration);
             GameManager.Instance?.ReportFail();
+            yield break;
+        }
+        else if (isSkateboard)
+        {
+            // Mount the skateboard, then hand off to the (separate) SkateboardRide for the slide.
+            if (animator != null) animator.SetTrigger(AnimJumpSkate);
+            yield return new WaitForSeconds(jumpSkateDuration);
+            if (_held || _isStopped) yield break; // caught during the mount
+            if (_agent != null && _agent.enabled)
+            {
+                if (_agent.isOnNavMesh) _agent.isStopped = true;
+                _agent.enabled = false; // scripted slide from here (SkateboardRide drives position)
+            }
+            if (_skateboardRide != null) _skateboardRide.Begin(this);
             yield break;
         }
 
@@ -1134,6 +1175,8 @@ public class ChildNPC : MonoBehaviour
         animator.ResetTrigger(AnimSurprised);
         animator.ResetTrigger(AnimDrink);
         animator.ResetTrigger(AnimDie);
+        animator.ResetTrigger(AnimJumpSkate);
+        animator.ResetTrigger(AnimFallDeath);
         animator.SetBool(AnimCarried, false);
         animator.SetFloat(AnimSpeed, 0f);
         animator.Play("Idle", 0, 0f);

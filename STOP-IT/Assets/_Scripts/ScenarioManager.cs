@@ -62,6 +62,10 @@ public class ScenarioManager : MonoBehaviour
         [Tooltip("Local Euler of the grabbed cleaning product in the child's hand.")]
         public Vector3 cleaningItemLocalEuler;
 
+        [Header("Skateboard (scenario 4)")]
+        [Tooltip("The skateboard the child mounts and rides down the stairs.")]
+        public SkateboardRide skateboardRide;
+
         [Header("Lose screen")]
         [Tooltip("Home-safety prevention message shown on the lose screen when THIS scenario fails.")]
         [TextArea(2, 4)]
@@ -263,6 +267,7 @@ public class ScenarioManager : MonoBehaviour
                                config.pickupItemLocalPosition, config.pickupItemLocalEuler);
             childNPC.SetCleaningProducts(config.cleaningProducts,
                                          config.cleaningItemLocalPosition, config.cleaningItemLocalEuler);
+            childNPC.SetSkateboard(config.skateboardRide);
         }
         if (config.waterBottle != null)
             config.waterBottle.ResetBottle();

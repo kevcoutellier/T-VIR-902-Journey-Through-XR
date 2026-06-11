@@ -33,6 +33,7 @@ public static class StoryModeSetup
     private const string ForkModelPath = "Assets/_ThirdParty/Models/Fork.glb";
     private const string CatModelPath = "Assets/_ThirdParty/Models/Cat.glb";
     private const string CatBedModelPath = "Assets/_ThirdParty/Models/Cat Bed.glb";
+    private const string SkateboardModelPath = "Assets/_ThirdParty/Models/Skateboard.glb";
     private const string NavMeshAssetPath = "Assets/_Scenes/Sandboxes/HousePreview_NavMesh.asset";
 
     private static System.Text.StringBuilder _log;
@@ -79,7 +80,7 @@ public static class StoryModeSetup
         var sm = GetOrAdd<ScenarioManager>(story);
         var director = GetOrAdd<StoryModeDirector>(story);
         director.autoStartOnPlay = true;
-        director.activeScenarioCount = 3; // S1 + S2 + S3 playable
+        director.activeScenarioCount = 4; // S1 + S2 + S3 + S4 playable
         L("step 1 OK — managers (GameManager + ScenarioManager + StoryModeDirector + AudioSource)");
 
         // 2. Child NPC
@@ -127,6 +128,7 @@ public static class StoryModeSetup
         // 3c. Scenario 3 props — bathroom. REUSE the house's existing cleaning products (foot of the sink)
         // + existing water bottle (wall niche). Remove any placeholders created by earlier runs.
         DumpBathroom();
+        DumpUpstairs();
         var oldCP = GameObject.Find("CleaningProducts"); if (oldCP != null) Object.DestroyImmediate(oldCP);
         var oldWBph = GameObject.Find("WaterBottle");    if (oldWBph != null) Object.DestroyImmediate(oldWBph);
 
@@ -195,6 +197,22 @@ public static class StoryModeSetup
         }
         L($"step 3c OK — S3 wired to {productObjs.Count} existing product objects (centroid {productsCentroid}) + existing water bottle.");
 
+        // 3d. Scenario 4 props — upstairs playroom: skateboard (facing the stairs) + the scripted slide path.
+        var skateSpot    = new Vector3(-7.50f, 3.25f, -7.50f);  // playroom (U_Floor_W ~y3.2); tune to the red-circle spot
+        // The board RIDES the StairRamp collider surface (SkateboardRide.followSurface), so these are XZ guides along the
+        // ramp centreline (x-10.3); their Y is only a fallback. The ramp spans z[-4.40 (top) .. -0.70 (bottom)], y[3.31..~0].
+        var stairsTop    = new Vector3(-10.30f, 3.30f, -4.20f); // enter the ramp at the top
+        var stairsBottom = new Vector3(-10.30f, 0.05f, -0.70f); // ramp bottom on the ground floor (G_Floor y~0) — the crash spot
+        var hazardSkate = CreateHazard("HazardZone_Skateboard", "Skateboard", skateSpot, 1.5f, story.transform);
+        hazardSkate.silentApproach = true; // no electrical sparks
+        var spawnS4  = CreateMarker("SpawnChild_S4", skateSpot, story.transform); // fallback (cfg uses null)
+        var wpTop    = CreateMarker("SkateWP_StairsTop",    stairsTop,    story.transform);
+        var wpBottom = CreateMarker("SkateWP_StairsBottom", stairsBottom, story.transform);
+        // Face the stairs, then +90° yaw (same as SkateboardRide.modelYawOffset) so the board's length/wheels — not its side — point along travel.
+        Quaternion skateRot = Quaternion.LookRotation(new Vector3(stairsTop.x - skateSpot.x, 0f, stairsTop.z - skateSpot.z), Vector3.up) * Quaternion.Euler(0f, 90f, 0f);
+        var skateRide = SetupSkateboard(skateSpot, skateRot, new[] { wpTop.transform, wpBottom.transform }, story.transform);
+        L("step 3d OK — scenario 4 props (skateboard, slide waypoints, hazard)");
+
         // 4. UI + EventSystem + lose screen
         var ui = SetupCanvasUI(story.transform);
         SetupLoseScreen(story.transform, director);
@@ -259,9 +277,23 @@ public static class StoryModeSetup
                           "Range-les en hauteur, fermés et hors de portée des enfants.",
             failScreenDelay = 0.3f,                  // the drink + death already played in full
         };
-        sm.scenarios = new[] { cfg, cfg2, cfg3 };
+        var cfg4 = new ScenarioManager.ScenarioConfig
+        {
+            scenarioName     = "Salle de jeux — Le skateboard",
+            actionHint       = "RATTRAPE LE BÉBÉ !",
+            childSpawnPoint  = null,                 // continue from S3, walk up the stairs to the skateboard
+            hazardZone       = hazardSkate,
+            playerSpawnPoint = null,
+            scenarioObjects  = new GameObject[0],
+            skateboardRide   = skateRide,
+            disableDirectChildSave = false,          // grab IS the save (catch the rider); advances on release
+            loseMessage = "Un enfant sur des roulettes près d'un escalier, c'est la chute assurée.\n" +
+                          "Range les objets à roulettes et installe une barrière en haut des marches.",
+            failScreenDelay = 0.3f,
+        };
+        sm.scenarios = new[] { cfg, cfg2, cfg3, cfg4 };
         child.targetHazard = hazardOutlet;
-        L("step 6 OK — ScenarioManager wired (3 scenarios)");
+        L("step 6 OK — ScenarioManager wired (4 scenarios)");
 
         // 7. Bake NavMesh (toddler radius) excluding dynamic objects
         var ignores = new List<Transform> {
@@ -271,6 +303,9 @@ public static class StoryModeSetup
         };
         if (waterGO != null) ignores.Add(waterGO.transform);
         foreach (var g in productObjs) ignores.Add(g.transform);
+        ignores.Add(hazardSkate.transform); ignores.Add(spawnS4.transform);
+        ignores.Add(wpTop.transform); ignores.Add(wpBottom.transform);
+        if (skateRide != null) ignores.Add(skateRide.transform);
         BakeStoryNavMesh(child, ignores.ToArray());
         L("step 7 OK — NavMesh baked");
 
@@ -297,6 +332,9 @@ public static class StoryModeSetup
         // Do NOT SnapHazardFloorHeight the poison hazard: its 6 m NavMesh sample grabbed the UPSTAIRS
         // floor (the sink foot is a NavMesh hole), pushing the hazard to y≈3.4 and sending the baby
         // upstairs. The products are already at floor height, so the centroid-derived Y is correct.
+        // S4: snap the skateboard mount point onto the upstairs floor + sit the board there.
+        SnapToNavMesh(hazardSkate.transform, 0f);
+        { Vector3 sp = hazardSkate.transform.position; skateRide.transform.position = new Vector3(sp.x, sp.y + 0.03f, sp.z); }
         // Hazards stay exactly on the prop; the child paths to the nearest floor point.
         VerifyPath("S1 spawn -> fork", spawnS1.transform.position, fork.transform.position);
         VerifyPath("S1 fork -> outlet", fork.transform.position, hazardOutlet.transform.position);
@@ -304,6 +342,7 @@ public static class StoryModeSetup
         VerifyPath("S2 cat -> microwave", cat.transform.position, hazardMicro.transform.position);
         VerifyPath("S3 microwave -> products", hazardMicro.transform.position, hazardClean.transform.position); // baby continues from ~the microwave (no teleport)
         if (waterGO != null) VerifyPath("S3 water -> products", waterGO.transform.position, hazardClean.transform.position);
+        VerifyPath("S4 bathroom -> skateboard (up the stairs)", hazardClean.transform.position, hazardSkate.transform.position);
 
         EditorUtility.SetDirty(gm);
         EditorUtility.SetDirty(sm);
@@ -417,7 +456,10 @@ public static class StoryModeSetup
         var put   = ImportAndGetClip(AnimDir + "PutForkInBaby.fbx", false);
         var putcat = ImportAndGetClip(AnimDir + "PuttingUpTheCatBaby.fbx", false);
         var drink = ImportAndGetClip(AnimDir + "DrinkingBaby.fbx", false);
-        var die   = ImportAndGetClip(AnimDir + "DyingBackwardsBaby.fbx", false, feetGrounded: false); // fall flat, not feet-planted
+        var die   = ImportAndGetClip(AnimDir + "DyingBackwardsBaby.fbx", false, feetGrounded: false);
+        var skate     = ImportAndGetClip(AnimDir + "SkateboardingBaby.fbx", true);              // looping ride
+        var jumpSkate = ImportAndGetClip(AnimDir + "JumpingOnSkateBaby.fbx", false);            // mount
+        var fallDeath = ImportAndGetClip(AnimDir + "FallingBackDeathBaby.fbx", false, feetGrounded: false); // wall hit // fall flat, not feet-planted
         var elec  = ImportAndGetClip(AnimDir + "BeingElectrocutedBaby.fbx", false);
         var surp  = ImportAndGetClip(AnimDir + "SurprisedBaby.fbx", false);
         var carry = ImportAndGetClip(AnimDir + "BeingCarriedBaby.fbx", true);
@@ -432,6 +474,8 @@ public static class StoryModeSetup
         ctrl.AddParameter("PutCat", AnimatorControllerParameterType.Trigger);
         ctrl.AddParameter("Drink", AnimatorControllerParameterType.Trigger);
         ctrl.AddParameter("Die", AnimatorControllerParameterType.Trigger);
+        ctrl.AddParameter("JumpSkate", AnimatorControllerParameterType.Trigger);
+        ctrl.AddParameter("FallDeath", AnimatorControllerParameterType.Trigger);
         ctrl.AddParameter("Electrocute", AnimatorControllerParameterType.Trigger);
         ctrl.AddParameter("Surprised", AnimatorControllerParameterType.Trigger);
         ctrl.AddParameter("Carried", AnimatorControllerParameterType.Bool);
@@ -444,6 +488,9 @@ public static class StoryModeSetup
         var sPutCat= sm.AddState("PutCat");      sPutCat.motion= putcat;
         var sDrink = sm.AddState("Drink");       sDrink.motion = drink;
         var sDie   = sm.AddState("Die");         sDie.motion   = die;
+        var sSkate = sm.AddState("Skate");       sSkate.motion = skate;
+        var sJumpSk= sm.AddState("JumpSkate");   sJumpSk.motion= jumpSkate;
+        var sFallD = sm.AddState("FallDeath");   sFallD.motion = fallDeath;
         var sElec  = sm.AddState("Electrocute"); sElec.motion  = elec;
         var sSurp  = sm.AddState("Surprised");   sSurp.motion  = surp;
         var sCarry = sm.AddState("Carried");     sCarry.motion = carry;
@@ -468,6 +515,11 @@ public static class StoryModeSetup
         tr = sDrink.AddTransition(sIdle); tr.hasExitTime = true; tr.exitTime = 0.97f; tr.duration = 0.15f;
         // Die (one-shot) -> holds the collapsed pose (no exit; a restart snaps back to Idle).
         tr = sm.AddAnyStateTransition(sDie); tr.hasExitTime = false; tr.duration = 0.08f; tr.canTransitionToSelf = false; tr.AddCondition(AnimatorConditionMode.If, 0, "Die");
+        // JumpSkate (one-shot mount) -> Skate (looping ride).
+        tr = sm.AddAnyStateTransition(sJumpSk); tr.hasExitTime = false; tr.duration = 0.08f; tr.canTransitionToSelf = false; tr.AddCondition(AnimatorConditionMode.If, 0, "JumpSkate");
+        tr = sJumpSk.AddTransition(sSkate); tr.hasExitTime = true; tr.exitTime = 0.80f; tr.duration = 0.10f;
+        // FallDeath (one-shot wall hit) -> holds the collapsed pose.
+        tr = sm.AddAnyStateTransition(sFallD); tr.hasExitTime = false; tr.duration = 0.06f; tr.canTransitionToSelf = false; tr.AddCondition(AnimatorConditionMode.If, 0, "FallDeath");
         // Electrocute (one-shot) -> Idle.
         tr = sm.AddAnyStateTransition(sElec); tr.hasExitTime = false; tr.duration = 0.05f; tr.canTransitionToSelf = false; tr.AddCondition(AnimatorConditionMode.If, 0, "Electrocute");
         tr = sElec.AddTransition(sIdle); tr.hasExitTime = true; tr.exitTime = 0.95f; tr.duration = 0.20f;
@@ -480,7 +532,7 @@ public static class StoryModeSetup
 
         EditorUtility.SetDirty(ctrl);
         AssetDatabase.SaveAssets();
-        L("[StoryModeSetup] BabyController built (Idle/Walk/PickUp/PutFork/PutCat/Drink/Die/Electrocute/Surprised/Carried).");
+        L("[StoryModeSetup] BabyController built (…/Drink/Die/Skate/JumpSkate/FallDeath/Electrocute/Surprised/Carried).");
         return ctrl;
     }
 
@@ -626,6 +678,36 @@ public static class StoryModeSetup
         FitMaxDimension(bed, 0.55f);
         foreach (var c in bed.GetComponentsInChildren<Collider>(true)) c.enabled = false; // decorative; don't block navmesh
         return bed;
+    }
+
+    private static SkateboardRide SetupSkateboard(Vector3 pos, Quaternion rot, Transform[] waypoints, Transform parent)
+    {
+        var go = GameObject.Find("Skateboard");
+        if (go == null)
+        {
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(SkateboardModelPath);
+            if (prefab != null) { go = (GameObject)PrefabUtility.InstantiatePrefab(prefab); go.name = "Skateboard"; }
+            else
+            {
+                L("[StoryModeSetup] WARNING: Skateboard.glb not found — using a placeholder cube.");
+                go = GameObject.CreatePrimitive(PrimitiveType.Cube); go.name = "Skateboard";
+                go.transform.localScale = new Vector3(0.2f, 0.05f, 0.6f);
+            }
+        }
+        go.transform.SetParent(parent, true);
+        go.transform.position = pos;
+        go.transform.rotation = rot;
+        FitMaxDimension(go, 0.55f);
+        foreach (var c in go.GetComponentsInChildren<Collider>(true)) c.enabled = false; // the ride is scripted; no physics
+        var ride = GetOrAdd<SkateboardRide>(go);
+        ride.waypoints = waypoints;
+        ride.rideSpeed = 2.5f;
+        ride.riderYOffset = 0.06f;
+        ride.modelYawOffset = 90f;  // align the board's wheels with travel (flip to -90 if it rolls backwards)
+        ride.followSurface = true;  // ride ON the StairRamp collider — no more guessing step heights
+        ride.alignToSurface = true; // pitch the board to the ramp slope
+        ride.surfaceLift = 0.03f;
+        return ride;
     }
 
     private static Material MakeColorMat(Color c)
@@ -901,6 +983,23 @@ public static class StoryModeSetup
             n++;
         }
         sb.AppendLine($"  ({n} renderers in the bathroom region)");
+        L(sb.ToString());
+    }
+
+    /// <summary>Logs the upstairs region (every 'Stair'/'Floor' collider + props at y &gt; 1.2) so we can place
+    /// the S4 skateboard, the spawn, and the stairs slide path.</summary>
+    private static void DumpUpstairs()
+    {
+        var sb = new System.Text.StringBuilder("[StoryModeSetup] --- upstairs / stairs (all 'Stair'/'Floor' + props at y > 1.2) ---\n");
+        foreach (var col in Object.FindObjectsByType<Collider>(FindObjectsInactive.Exclude))
+        {
+            if (!col.enabled || col.isTrigger) continue;
+            var b = col.bounds;
+            float fp = b.size.x * b.size.z;
+            bool keep = col.name.Contains("Stair") || col.name.Contains("Floor") || (b.center.y > 1.2f && fp > 0.25f);
+            if (!keep) continue;
+            sb.AppendLine($"  '{col.name}'  center=({b.center.x:F1},{b.center.y:F1},{b.center.z:F1})  size=({b.size.x:F1},{b.size.y:F1},{b.size.z:F1})");
+        }
         L(sb.ToString());
     }
 
