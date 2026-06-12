@@ -1,8 +1,8 @@
 ---
-owner: FREE
-since: 
-feature: 
-expected_release: 
+owner: chrisDev06
+since: 2026-06-12 16:12
+feature: menu tour camera + 2 roaming NPCs (MenuTourBuilder)
+expected_release: 2026-06-12 18:00
 ---
 
 # Verrou de la scène principale `LivingRoom.unity`
