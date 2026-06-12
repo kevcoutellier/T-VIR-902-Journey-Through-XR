@@ -23,6 +23,7 @@ public static class MenuTourBuilder
     // Room camera poses: (position, lookAt). Coordinates match HouseBuilder's layout.
     private struct Pose { public string name; public Vector3 pos; public Vector3 look; }
 
+    // One stop per scenario room, in scenario order (Salon, Cuisine, Escalier, SdB, Chambre/fenêtre).
     private static readonly Pose[] CameraStops =
     {
         new Pose { name = "WP_Salon",    pos = new Vector3(-1.5f, 1.8f,  1.8f), look = new Vector3(-5.0f, 1.0f,  4.5f) },
@@ -30,7 +31,16 @@ public static class MenuTourBuilder
         new Pose { name = "WP_Escalier", pos = new Vector3( 1.5f, 1.8f, -1.8f), look = new Vector3( 5.0f, 1.0f, -4.5f) },
         new Pose { name = "WP_SdB",      pos = new Vector3(-1.5f, 1.8f, -1.8f), look = new Vector3(-5.0f, 1.0f, -4.5f) },
         new Pose { name = "WP_Chambre",  pos = new Vector3( 1.5f, 4.6f, -1.8f), look = new Vector3( 5.0f, 3.8f, -4.5f) },
-        new Pose { name = "WP_Couloir",  pos = new Vector3( 0.0f, 1.8f,  0.0f), look = new Vector3( 0.0f, 1.2f,  5.0f) },
+    };
+
+    // Objective line shown under each scenario title in the showcase (per scenario index).
+    private static readonly string[] Objectives =
+    {
+        "Empêche l'enfant d'enfoncer une fourchette dans la prise.",
+        "Il veut glisser le chat dans le micro-ondes.",
+        "Il s'élance pour dévaler l'escalier en skateboard.",
+        "Il s'apprête à boire un produit ménager.",
+        "Il grimpe sur le rebord pour attraper un pigeon.",
     };
 
     // Roam points the two strollers wander between (ground-floor room centres + corridor).
@@ -53,22 +63,23 @@ public static class MenuTourBuilder
         var root = new GameObject("MenuTour");
         Undo.RegisterCreatedObjectUndo(root, "Build Menu Tour");
 
-        BuildCamera(root.transform);
+        var tour = BuildCamera(root.transform);
         var roamParent = BuildRoamPoints(root.transform);
         BuildRoamer(root.transform, "MenuStroller_A", new Vector3(-3.5f, 0f, 3.5f), roamParent, sequential: false);
         BuildRoamer(root.transform, "MenuStroller_B", new Vector3( 3.5f, 0f, -3.5f), roamParent, sequential: true);
+        BuildShowcase(root.transform, tour);
 
         // Mark the scene dirty so the user is prompted to save.
         EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
         Selection.activeGameObject = root;
 
-        Debug.Log("[STOP IT] Menu Tour built: 1 dolly camera + 6 waypoints + 2 strollers. " +
-                  "Swap the placeholder capsules for the real character meshes, then save the scene. " +
-                  "Bake the NavMesh if the strollers don't move.");
+        Debug.Log("[STOP IT] Menu Tour built: dolly camera + 5 scenario waypoints + 2 strollers + " +
+                  "scenario showcase UI. Swap the placeholder capsules for the real character meshes, " +
+                  "then save the scene. Bake the NavMesh if the strollers don't move.");
     }
 
     // ── Camera + waypoints ────────────────────────────────────────────────
-    private static void BuildCamera(Transform parent)
+    private static MenuCameraTour BuildCamera(Transform parent)
     {
         var camGO = new GameObject("MenuCamera");
         camGO.transform.SetParent(parent, false);
@@ -97,8 +108,10 @@ public static class MenuTourBuilder
         tour.waypoints = wps;
         tour.tourTarget = camGO.transform;
         tour.loop = true;
-        tour.travelTime = 4f;
-        tour.dwellTime = 2.5f;
+        tour.travelTime = 7f;       // slow, gentle glide
+        tour.dwellTime = 4f;        // linger in each room so the scenario reads
+        tour.autoAdvance = true;
+        tour.autoResumeDelay = 8f;
         tour.onlyDuringMenu = true;
         tour.snapToFirstOnStart = true;
 
@@ -106,6 +119,24 @@ public static class MenuTourBuilder
         camGO.transform.SetPositionAndRotation(wps[0].position, wps[0].rotation);
 
         EditorUtility.SetDirty(tour);
+        return tour;
+    }
+
+    // ── Scenario showcase UI ──────────────────────────────────────────────
+    private static void BuildShowcase(Transform parent, MenuCameraTour tour)
+    {
+        var go = new GameObject("MenuShowcase", typeof(RectTransform));
+        go.transform.SetParent(parent, false);
+        Undo.RegisterCreatedObjectUndo(go, "Menu Showcase");
+
+        var showcase = go.AddComponent<MenuScenarioShowcase>();
+        showcase.cameraTour = tour;
+        showcase.scenarioManager = Object.FindAnyObjectByType<ScenarioManager>();
+        // 5 camera stops map 1:1 to scenarios 0..4 (Salon, Cuisine, Escalier, SdB, fenêtre).
+        showcase.scenarioPerStop = new[] { 0, 1, 2, 3, 4 };
+        showcase.objectiveOverrides = (string[])Objectives.Clone();
+
+        EditorUtility.SetDirty(showcase);
     }
 
     // ── Roam points ──────────────────────────────────────────────────────

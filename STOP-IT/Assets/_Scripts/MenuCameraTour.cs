@@ -1,27 +1,24 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Events;
 
 /// <summary>
 /// STOP IT! — MenuCameraTour
-/// Cinematic menu background: a dolly camera that glides smoothly from room to
-/// room through an ordered list of waypoint poses, pausing briefly in each room,
-/// then looping. Designed to run behind the floating <see cref="ScenarioMenu"/>
-/// UI while the game is in <see cref="GameManager.GameState.Menu"/>.
+/// Cinematic menu background: a slow dolly camera that glides from room to room
+/// through an ordered list of waypoint poses, pausing in each room. It is the
+/// "attract mode" backdrop behind <see cref="MenuScenarioShowcase"/>, which shows
+/// the matching scenario each time the camera settles in a room.
 ///
-/// Wiring (no scene-lock-free script — see CLAUDE.md for the LivingRoom lock):
-///   1. Add an empty "MenuCamera" GameObject with a Camera component.
-///   2. Attach this script to it (tourTarget defaults to its own transform).
-///   3. Drop one empty Transform per room into <see cref="waypoints"/>, posed
-///      exactly where/how you want the camera to sit (position + rotation).
-///      Leave the list empty to auto-collect children named "WP*"/"Waypoint*".
-///   4. Optionally tick <see cref="onlyDuringMenu"/> so the tour (and this
-///      camera) only run in the Menu state and hand control back to the XR rig
-///      when a scenario starts.
+/// Two ways to drive it:
+///   • Auto-advance (default): cycles through every stop on a loop, firing
+///     <see cref="OnArrive"/> with the stop index each time it settles.
+///   • <see cref="GoToStop"/>: the showcase calls this when the player picks a
+///     scenario — the camera glides straight to that room and auto-advance pauses
+///     for <see cref="autoResumeDelay"/> seconds before resuming the loop.
 ///
-/// The motion uses a Catmull-Rom spline through the waypoint positions for a
-/// continuous, drift-free glide, with an ease-in/out dwell at each room. Rotation
-/// slerps between consecutive waypoint orientations (or toward an optional global
-/// <see cref="lookAtTarget"/>).
+/// Motion is a Catmull-Rom spline through the waypoint positions for a continuous,
+/// drift-free glide; rotation slerps between waypoint orientations (or toward an
+/// optional <see cref="lookAtTarget"/>).
 /// </summary>
 [DefaultExecutionOrder(20)]
 public class MenuCameraTour : MonoBehaviour
@@ -38,15 +35,23 @@ public class MenuCameraTour : MonoBehaviour
              "(put the script on the menu camera itself).")]
     public Transform tourTarget;
 
-    [Header("Timing")]
+    [Header("Timing (slow + gentle for a menu)")]
     [Tooltip("Seconds to travel between two consecutive rooms.")]
-    [Min(0.1f)] public float travelTime = 4f;
+    [Min(0.5f)] public float travelTime = 7f;
 
     [Tooltip("Seconds to dwell (hold still) in each room before moving on.")]
-    [Min(0f)] public float dwellTime = 2.5f;
+    [Min(0f)] public float dwellTime = 4f;
 
     [Tooltip("Ease curve applied to the 0..1 travel progress (smooth start/stop).")]
     public AnimationCurve travelEase = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
+
+    [Header("Auto-advance")]
+    [Tooltip("Automatically cycle to the next room after each dwell.")]
+    public bool autoAdvance = true;
+
+    [Tooltip("After the player jumps to a room via GoToStop, seconds to hold there " +
+             "before the automatic cycle resumes.")]
+    [Min(0f)] public float autoResumeDelay = 8f;
 
     [Header("Look")]
     [Tooltip("If set, the camera always faces this target instead of slerping " +
@@ -58,21 +63,36 @@ public class MenuCameraTour : MonoBehaviour
 
     [Header("Lifecycle")]
     [Tooltip("Only run the tour while GameManager is in the Menu state. The camera " +
-             "(and any AudioListener on it) is disabled when a scenario starts so " +
-             "the XR rig takes over, and re-enabled on return to the menu.")]
+             "is disabled when a scenario starts so the XR rig takes over, and " +
+             "re-enabled on return to the menu.")]
     public bool onlyDuringMenu = true;
 
     [Tooltip("Start the camera exactly on the first waypoint pose on enable.")]
     public bool snapToFirstOnStart = true;
 
+    [Header("Events")]
+    [Tooltip("Fired with the stop index each time the camera settles in a room. " +
+             "MenuScenarioShowcase listens to update the on-screen scenario.")]
+    public UnityEvent<int> OnArrive = new UnityEvent<int>();
+
+    /// <summary>Index of the room the camera is currently parked at (or heading from).</summary>
+    public int CurrentStop => _fromIndex;
+    public int StopCount => waypoints.Count;
+
     // ── Runtime ──────────────────────────────────────────────────────────────
     private enum Phase { Dwelling, Travelling }
     private Phase _phase = Phase.Dwelling;
-    private int   _fromIndex;          // current room we're leaving
+    private int   _fromIndex;
     private float _phaseTimer;
     private bool  _running;
     private Camera _cam;
     private bool  _subscribed;
+
+    // Direct "fly to this stop" jump (player selection). -1 = no pending jump.
+    private int        _jumpTarget = -1;
+    private Vector3    _jumpStartPos;
+    private Quaternion _jumpStartRot;
+    private float      _autoPausedUntil;
 
     // ── Unity ──────────────────────────────────────────────────────────────
     private void Awake()
@@ -91,12 +111,6 @@ public class MenuCameraTour : MonoBehaviour
             _subscribed = true;
         }
 
-        if (snapToFirstOnStart && waypoints.Count > 0 && waypoints[0] != null)
-        {
-            tourTarget.SetPositionAndRotation(waypoints[0].position, waypoints[0].rotation);
-        }
-
-        // Decide the initial running state from the current game state.
         bool inMenu = GameManager.Instance == null ||
                       GameManager.Instance.State == GameManager.GameState.Menu;
         SetRunning(!onlyDuringMenu || inMenu);
@@ -118,77 +132,130 @@ public class MenuCameraTour : MonoBehaviour
     private void SetRunning(bool run)
     {
         _running = run;
-        // Toggle the menu camera so the XR rig owns the view during gameplay.
         if (_cam != null) _cam.enabled = run;
 
-        if (run)
+        if (!run) return;
+
+        _phase           = Phase.Dwelling;
+        _phaseTimer      = 0f;
+        _fromIndex       = 0;
+        _jumpTarget      = -1;
+        _autoPausedUntil = 0f;
+
+        if (snapToFirstOnStart && waypoints.Count > 0 && waypoints[0] != null)
+            tourTarget.SetPositionAndRotation(waypoints[0].position, waypoints[0].rotation);
+
+        Arrive(_fromIndex); // announce the first room immediately
+    }
+
+    /// <summary>
+    /// Player selected a scenario: glide straight to <paramref name="index"/> and
+    /// pause auto-advance for a while. If we're already parked there, just re-announce.
+    /// </summary>
+    public void GoToStop(int index)
+    {
+        if (index < 0 || index >= waypoints.Count) return;
+        _autoPausedUntil = Time.time + autoResumeDelay;
+
+        if (index == _fromIndex && _jumpTarget < 0 && _phase == Phase.Dwelling)
         {
-            _phase      = Phase.Dwelling;
-            _phaseTimer = 0f;
-            _fromIndex  = 0;
-            if (snapToFirstOnStart && waypoints.Count > 0 && waypoints[0] != null)
-                tourTarget.SetPositionAndRotation(waypoints[0].position, waypoints[0].rotation);
+            Arrive(index); // refresh selection without moving
+            return;
         }
+
+        _jumpStartPos = tourTarget.position;
+        _jumpStartRot = tourTarget.rotation;
+        _jumpTarget   = index;
+        _phaseTimer   = 0f;
+    }
+
+    private void Arrive(int index)
+    {
+        OnArrive?.Invoke(index);
     }
 
     private void Update()
     {
         if (!_running || waypoints.Count == 0 || tourTarget == null) return;
 
-        // Single-waypoint degenerate case: just sit there (optionally look at target).
         if (waypoints.Count == 1)
         {
-            if (waypoints[0] != null)
-                tourTarget.position = waypoints[0].position;
+            if (waypoints[0] != null) tourTarget.position = waypoints[0].position;
             ApplyLook(waypoints[0] != null ? waypoints[0].rotation : tourTarget.rotation);
             return;
         }
 
         _phaseTimer += Time.deltaTime;
 
+        // ── Direct jump to a selected room ───────────────────────────────────
+        if (_jumpTarget >= 0)
+        {
+            float jr = Mathf.Clamp01(_phaseTimer / travelTime);
+            float jt = travelEase != null ? travelEase.Evaluate(jr) : jr;
+
+            Vector3 toPos = waypoints[_jumpTarget] != null ? waypoints[_jumpTarget].position : tourTarget.position;
+            tourTarget.position = Vector3.Lerp(_jumpStartPos, toPos, jt);
+
+            Quaternion toRot = waypoints[_jumpTarget] != null ? waypoints[_jumpTarget].rotation : tourTarget.rotation;
+            ApplyLook(Quaternion.Slerp(_jumpStartRot, toRot, jt));
+
+            if (jr >= 1f)
+            {
+                _fromIndex  = _jumpTarget;
+                _jumpTarget = -1;
+                _phase      = Phase.Dwelling;
+                _phaseTimer = 0f;
+                Arrive(_fromIndex);
+            }
+            return;
+        }
+
+        // ── Dwelling ─────────────────────────────────────────────────────────
         if (_phase == Phase.Dwelling)
         {
-            // Hold on the current waypoint pose.
             var wp = waypoints[_fromIndex];
             if (wp != null) tourTarget.position = wp.position;
             ApplyLook(wp != null ? wp.rotation : tourTarget.rotation);
 
             if (_phaseTimer >= dwellTime)
             {
-                _phaseTimer = 0f;
-                _phase = Phase.Travelling;
+                bool mayAdvance = autoAdvance && Time.time >= _autoPausedUntil;
+                if (mayAdvance)
+                {
+                    _phaseTimer = 0f;
+                    _phase = Phase.Travelling;
+                }
+                else
+                {
+                    _phaseTimer = dwellTime; // hold; don't let the timer run away
+                }
             }
             return;
         }
 
-        // ── Travelling ─────────────────────────────────────────────────────
+        // ── Travelling (spline to the next room) ─────────────────────────────
         int toIndex = NextIndex(_fromIndex);
         float raw   = Mathf.Clamp01(_phaseTimer / travelTime);
         float t     = travelEase != null ? travelEase.Evaluate(raw) : raw;
 
         tourTarget.position = SplinePosition(_fromIndex, toIndex, t);
 
-        // Orientation: face the global target if set, else slerp between waypoint rotations.
         Quaternion fromRot = waypoints[_fromIndex] != null ? waypoints[_fromIndex].rotation : tourTarget.rotation;
-        Quaternion toRot   = waypoints[toIndex]   != null ? waypoints[toIndex].rotation   : tourTarget.rotation;
-        ApplyLook(Quaternion.Slerp(fromRot, toRot, t));
+        Quaternion toRot2  = waypoints[toIndex]   != null ? waypoints[toIndex].rotation   : tourTarget.rotation;
+        ApplyLook(Quaternion.Slerp(fromRot, toRot2, t));
 
         if (raw >= 1f)
         {
             _fromIndex  = toIndex;
             _phaseTimer = 0f;
             _phase      = Phase.Dwelling;
+            Arrive(_fromIndex);
 
-            // Non-looping tour ends when it reaches the last room.
             if (!loop && _fromIndex == waypoints.Count - 1)
                 _running = false;
         }
     }
 
-    /// <summary>
-    /// Either snaps toward the supplied "spline" rotation, or — when a global
-    /// lookAtTarget is set — smoothly re-orients the camera to face it.
-    /// </summary>
     private void ApplyLook(Quaternion splineRot)
     {
         if (lookAtTarget != null)
@@ -210,21 +277,15 @@ public class MenuCameraTour : MonoBehaviour
     private int NextIndex(int i)
     {
         int n = waypoints.Count;
-        if (loop) return (i + 1) % n;
-        return Mathf.Min(i + 1, n - 1);
+        return loop ? (i + 1) % n : Mathf.Min(i + 1, n - 1);
     }
 
     private int PrevIndex(int i)
     {
         int n = waypoints.Count;
-        if (loop) return (i - 1 + n) % n;
-        return Mathf.Max(i - 1, 0);
+        return loop ? (i - 1 + n) % n : Mathf.Max(i - 1, 0);
     }
 
-    /// <summary>
-    /// Catmull-Rom interpolation between waypoint[from] and waypoint[to], using the
-    /// neighbouring waypoints as tangents for a continuous, natural glide.
-    /// </summary>
     private Vector3 SplinePosition(int from, int to, float t)
     {
         Vector3 p1 = SafePos(from);
@@ -262,20 +323,16 @@ public class MenuCameraTour : MonoBehaviour
 #if UNITY_EDITOR
     private void OnDrawGizmos()
     {
-        var pts = (waypoints != null && waypoints.Count > 0) ? waypoints : null;
-        if (pts == null) return;
-
+        if (waypoints == null || waypoints.Count == 0) return;
         Gizmos.color = new Color(0.3f, 0.8f, 1f, 0.9f);
-        for (int i = 0; i < pts.Count; i++)
+        for (int i = 0; i < waypoints.Count; i++)
         {
-            if (pts[i] == null) continue;
-            Gizmos.DrawWireSphere(pts[i].position, 0.25f);
-            // Draw the camera facing direction.
-            Gizmos.DrawRay(pts[i].position, pts[i].forward * 0.6f);
-
-            int next = (i + 1 < pts.Count) ? i + 1 : (loop ? 0 : -1);
-            if (next >= 0 && pts[next] != null)
-                Gizmos.DrawLine(pts[i].position, pts[next].position);
+            if (waypoints[i] == null) continue;
+            Gizmos.DrawWireSphere(waypoints[i].position, 0.25f);
+            Gizmos.DrawRay(waypoints[i].position, waypoints[i].forward * 0.6f);
+            int next = (i + 1 < waypoints.Count) ? i + 1 : (loop ? 0 : -1);
+            if (next >= 0 && waypoints[next] != null)
+                Gizmos.DrawLine(waypoints[i].position, waypoints[next].position);
         }
     }
 #endif
