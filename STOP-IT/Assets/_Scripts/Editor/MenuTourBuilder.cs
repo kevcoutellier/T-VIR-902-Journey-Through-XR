@@ -93,12 +93,18 @@ public static class MenuTourBuilder
 
         var tour = camGO.AddComponent<MenuCameraTour>();
 
+        // Waypoints live on a STATIC holder under MenuTour — never under the camera,
+        // or they'd move with it and the spline would chase fleeing targets (jitter).
+        var wpHolder = new GameObject("Waypoints");
+        wpHolder.transform.SetParent(parent, false);
+        Undo.RegisterCreatedObjectUndo(wpHolder, "Menu Waypoints");
+
         // Create one waypoint Transform per room stop, posed + oriented.
         var wps = new List<Transform>(CameraStops.Length);
         foreach (var stop in CameraStops)
         {
             var wp = new GameObject(stop.name);
-            wp.transform.SetParent(camGO.transform, false);
+            wp.transform.SetParent(wpHolder.transform, false);
             wp.transform.position = stop.pos;
             wp.transform.rotation = Quaternion.LookRotation((stop.look - stop.pos).normalized, Vector3.up);
             Undo.RegisterCreatedObjectUndo(wp, "Menu Waypoint");

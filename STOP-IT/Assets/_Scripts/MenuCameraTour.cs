@@ -94,6 +94,9 @@ public class MenuCameraTour : MonoBehaviour
     private Quaternion _jumpStartRot;
     private float      _autoPausedUntil;
 
+    // Other cameras we switched off while the menu tour owns the view (restored on exit).
+    private readonly List<Camera> _suppressedCams = new List<Camera>();
+
     // ── Unity ──────────────────────────────────────────────────────────────
     private void Awake()
     {
@@ -120,6 +123,7 @@ public class MenuCameraTour : MonoBehaviour
     {
         if (_subscribed && GameManager.Instance != null)
             GameManager.Instance.OnStateChanged.RemoveListener(OnStateChanged);
+        SuppressOtherCameras(false); // never leave the XR camera switched off
     }
 
     private void OnStateChanged(GameManager.GameState state)
@@ -134,6 +138,8 @@ public class MenuCameraTour : MonoBehaviour
         _running = run;
         if (_cam != null) _cam.enabled = run;
 
+        SuppressOtherCameras(run);
+
         if (!run) return;
 
         _phase           = Phase.Dwelling;
@@ -146,6 +152,33 @@ public class MenuCameraTour : MonoBehaviour
             tourTarget.SetPositionAndRotation(waypoints[0].position, waypoints[0].rotation);
 
         Arrive(_fromIndex); // announce the first room immediately
+    }
+
+    /// <summary>
+    /// While the tour owns the view, switch off every other enabled camera (the XR
+    /// rig camera, etc.) so the menu camera is the single, stable source — otherwise
+    /// two full-screen cameras fight each frame and the image flickers/judders.
+    /// Restores them when the tour stops (scenario start / leaving the menu).
+    /// </summary>
+    private void SuppressOtherCameras(bool suppress)
+    {
+        if (suppress)
+        {
+            if (_cam == null) return;
+            _suppressedCams.Clear();
+            foreach (var c in Camera.allCameras) // allCameras = currently enabled cameras
+            {
+                if (c == null || c == _cam) continue;
+                c.enabled = false;
+                _suppressedCams.Add(c);
+            }
+        }
+        else
+        {
+            foreach (var c in _suppressedCams)
+                if (c != null) c.enabled = true;
+            _suppressedCams.Clear();
+        }
     }
 
     /// <summary>
