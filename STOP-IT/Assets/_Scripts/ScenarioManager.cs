@@ -274,11 +274,19 @@ public class ScenarioManager : MonoBehaviour
         if (config.pigeon != null)
             config.pigeon.ResetPigeon(childNPC);
 
+        // Catch scenarios (fork S1, skate S4) only let the player catch the child once it commits
+        // (picks up the fork / mounts the skate); ChildNPC.ArmCatch reveals the hint at that moment.
+        // Every direct-catch scenario (S1 fork, S4 skate) commits via a pickup/mount that calls
+        // ChildNPC.ArmCatch — so gate on the save rule alone (robust even if a prop ref is missing).
+        bool gateCatch = childNPC != null && !config.disableDirectChildSave;
+        if (childNPC != null)
+            childNPC.ConfigureCatchGate(gateCatch, config.actionHint);
+
         // Update UI
         if (scenarioUI != null)
         {
             scenarioUI.SetScenarioName(config.scenarioName);
-            scenarioUI.SetActionHint(config.actionHint);
+            scenarioUI.SetActionHint(gateCatch ? "" : config.actionHint);
         }
 
         // Story progress in the score slot: "(current scenario)/(total)".

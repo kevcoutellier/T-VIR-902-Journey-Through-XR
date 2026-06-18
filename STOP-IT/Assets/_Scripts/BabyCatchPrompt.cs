@@ -43,7 +43,7 @@ public class BabyCatchPrompt : MonoBehaviour
         if (cam != null && _child != null
             && GameManager.Instance != null
             && GameManager.Instance.State == GameManager.GameState.Playing
-            && _child.canBeSavedDirectly && !_child.IsHeld)
+            && _child.canBeSavedDirectly && _child.IsCatchable && !_child.IsHeld)
         {
             Vector3 childPos = _child.transform.position;
             if (Vector3.Distance(cam.transform.position, childPos) <= showDistance)

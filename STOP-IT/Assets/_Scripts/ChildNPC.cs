@@ -120,6 +120,8 @@ public class ChildNPC : MonoBehaviour
     public static bool S3ProductGrabbed; // true once the toddler has the poison bottle in hand → swap deadline passed
     private bool _isStopped = false;
     private bool _held = false;
+    private bool _catchArmed = true;   // is the catch live right now? Gated until pickup/mount for the catch scenarios (S1/S4).
+    private string _pendingCatchHint;  // action hint revealed the moment the catch arms.
     private bool _forceWalkNow = false;
     private Transform _originalParent;
     private Vector3 _lastTargetPos;
@@ -400,6 +402,7 @@ public class ChildNPC : MonoBehaviour
         // Some scenarios (cat, window) forbid saving the child by touch/grab —
         // the player must solve them another way. Ignore the reflex slap there.
         if (!canBeSavedDirectly) return;
+        if (!_catchArmed) return; // not catchable until the child has committed (fork / skate)
         _isStopped = true;
         _isMoving = false;
         if (_agent != null && _agent.isActiveAndEnabled && _agent.isOnNavMesh)
@@ -424,6 +427,8 @@ public class ChildNPC : MonoBehaviour
         // Cat / window scenarios forbid the direct grab — force the player to use
         // the scenario verb instead.
         if (!canBeSavedDirectly) return false;
+        // The catch scenarios (fork / skateboard) arm the catch only once the child commits.
+        if (!_catchArmed) return false;
         _isStopped = true;
         _isMoving = false;
         _held = true;
@@ -523,6 +528,7 @@ public class ChildNPC : MonoBehaviour
     }
 
     public bool IsHeld => _held;
+    public bool IsCatchable => _catchArmed; // false until the child commits (picks up the fork / mounts the skate).
 
     /// <summary>Toggles the cosmetic skateboard mesh (stairs scenario only).</summary>
     public void SetSkateboardVisible(bool on)
@@ -635,6 +641,26 @@ public class ChildNPC : MonoBehaviour
     /// <summary>Scenario 4: the skateboard the child rides down the stairs (set on activation).</summary>
     public void SetSkateboard(SkateboardRide ride) { _skateboardRide = ride; }
 
+    /// <summary>Scenario setup: for catch-after-progress scenarios (S1 fork, S4 skate), keep the catch
+    /// (and its action hint) disabled until the child commits. Other scenarios are catchable at once.</summary>
+    public void ConfigureCatchGate(bool gateUntilProgress, string hintWhenArmed)
+    {
+        _catchArmed = !gateUntilProgress;
+        _pendingCatchHint = hintWhenArmed;
+    }
+
+    /// <summary>Arms the catch (and reveals its hint) the moment the child picks up the fork / mounts the skate.</summary>
+    private void ArmCatch()
+    {
+        if (_catchArmed) return; // already live (non-gated scenario)
+        _catchArmed = true;
+        if (!string.IsNullOrEmpty(_pendingCatchHint))
+        {
+            var ui = FindAnyObjectByType<ScenarioUI>();
+            if (ui != null) ui.SetActionHint(_pendingCatchHint);
+        }
+    }
+
     /// <summary>Called by SkateboardRide when the toddler reaches the bottom of the stairs UNCAUGHT:
     /// it slams the wall, falls backwards, and we lose.</summary>
     public void HitWallDeath()
@@ -704,6 +730,7 @@ public class ChildNPC : MonoBehaviour
             SetCarriedItem(_pickupItem, _pickupItemLocalPos, _pickupItemLocalEuler);
         yield return new WaitForSeconds(pickupAnimDuration - attach);
         if (_held || _isStopped) yield break;   // player caught the child during the pickup
+        ArmCatch(); // fork is in hand → the catch (and its hint) goes live for the walk to the hazard
 
         if (targetHazard != null)
         {
@@ -829,7 +856,15 @@ public class ChildNPC : MonoBehaviour
                 if (_agent.isOnNavMesh) _agent.isStopped = true;
                 _agent.enabled = false; // scripted slide from here (SkateboardRide drives position)
             }
+            // Robust: if the scenario config reference didn't reach us, find the ride in the scene anyway.
+            if (_skateboardRide == null)
+            {
+                _skateboardRide = FindAnyObjectByType<SkateboardRide>();
+                Debug.LogWarning($"[ChildNPC] S4: _skateboardRide was null (config wiring missing) — scene fallback found one: {_skateboardRide != null}", this);
+            }
             if (_skateboardRide != null) _skateboardRide.Begin(this);
+            else Debug.LogError("[ChildNPC] S4: no SkateboardRide in the scene — the baby can't ride.", this);
+            ArmCatch(); // on the skate and rolling → the catch (and its hint) goes live
             yield break;
         }
 
