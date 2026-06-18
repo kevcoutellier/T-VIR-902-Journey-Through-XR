@@ -62,6 +62,10 @@ public class ScenarioManager : MonoBehaviour
         [Tooltip("Local Euler of the grabbed cleaning product in the child's hand.")]
         public Vector3 cleaningItemLocalEuler;
 
+        [Header("Skateboard (scenario 4)")]
+        [Tooltip("The skateboard the child mounts and rides down the stairs.")]
+        public SkateboardRide skateboardRide;
+
         [Header("Lose screen")]
         [Tooltip("Home-safety prevention message shown on the lose screen when THIS scenario fails.")]
         [TextArea(2, 4)]
@@ -263,17 +267,26 @@ public class ScenarioManager : MonoBehaviour
                                config.pickupItemLocalPosition, config.pickupItemLocalEuler);
             childNPC.SetCleaningProducts(config.cleaningProducts,
                                          config.cleaningItemLocalPosition, config.cleaningItemLocalEuler);
+            childNPC.SetSkateboard(config.skateboardRide);
         }
         if (config.waterBottle != null)
             config.waterBottle.ResetBottle();
         if (config.pigeon != null)
             config.pigeon.ResetPigeon(childNPC);
 
+        // Catch scenarios (fork S1, skate S4) only let the player catch the child once it commits
+        // (picks up the fork / mounts the skate); ChildNPC.ArmCatch reveals the hint at that moment.
+        // Every direct-catch scenario (S1 fork, S4 skate) commits via a pickup/mount that calls
+        // ChildNPC.ArmCatch — so gate on the save rule alone (robust even if a prop ref is missing).
+        bool gateCatch = childNPC != null && !config.disableDirectChildSave;
+        if (childNPC != null)
+            childNPC.ConfigureCatchGate(gateCatch, config.actionHint);
+
         // Update UI
         if (scenarioUI != null)
         {
             scenarioUI.SetScenarioName(config.scenarioName);
-            scenarioUI.SetActionHint(config.actionHint);
+            scenarioUI.SetActionHint(gateCatch ? "" : config.actionHint);
         }
 
         // Story progress in the score slot: "(current scenario)/(total)".
