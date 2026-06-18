@@ -21,6 +21,9 @@ public class PigeonEscape : MonoBehaviour
     [Tooltip("Distance from child at which the pigeon takes off (metres). Pick a value > 2 m so the bird leaves clearly BEFORE the toddler reaches the ledge.")]
     public float triggerDistance = 3f;
 
+    [Tooltip("If true, take off when the child comes within triggerDistance. If false, only TakeOff() triggers it (the window scenario fires it at 80% of the climb).")]
+    public bool autoTriggerByDistance = true;
+
     [Header("Flight")]
     [Tooltip("World-space delta added to start position during the flight.")]
     public Vector3 flightOffset = new Vector3(5f, 3f, -1f);
@@ -77,10 +80,16 @@ public class PigeonEscape : MonoBehaviour
 
     private void Update()
     {
-        if (_flying || childNPC == null) return;
+        if (_flying || childNPC == null || !autoTriggerByDistance) return;
         float sqr = (childNPC.transform.position - transform.position).sqrMagnitude;
         if (sqr <= triggerDistance * triggerDistance)
             _flightRoutine = StartCoroutine(FlyAway());
+    }
+
+    /// <summary>Trigger the take-off externally (the window scenario calls this at 80% of the toddler's climb).</summary>
+    public void TakeOff()
+    {
+        if (!_flying) _flightRoutine = StartCoroutine(FlyAway());
     }
 
     private IEnumerator FlyAway()

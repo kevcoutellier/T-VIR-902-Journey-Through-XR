@@ -79,8 +79,19 @@ public static class StoryModeSetup
 
         var sm = GetOrAdd<ScenarioManager>(story);
         var director = GetOrAdd<StoryModeDirector>(story);
-        director.autoStartOnPlay = true;
-        director.activeScenarioCount = 4; // S1 + S2 + S3 + S4 playable
+        director.autoStartOnPlay = false; // wait for the menu (MenuScenarioShowcase) — don't auto-launch the story
+        director.activeScenarioCount = 5; // S1 + S2 + S3 + S4 + S5 playable
+        director.victoryMessage =
+            "Bravo, tu as veillé sur ton enfant jusqu'au bout !\n\n" +
+            "Mais à la maison, un accident arrive en un instant d'inattention.\n\n" +
+            "Quelques gestes qui sauvent :\n\n" +
+            "Prises électriques — installe des cache-prises sur toutes les prises accessibles.\n\n" +
+            "Appareils & micro-ondes — garde-les hors de portée et surveille leur usage.\n\n" +
+            "Produits ménagers — range-les en hauteur, fermés, hors de portée des enfants.\n\n" +
+            "Escaliers — pose une barrière de sécurité en haut et en bas des marches.\n\n" +
+            "Fenêtres — installe des bloque-fenêtres et ne place jamais un meuble sous une fenêtre.\n\n" +
+            "Ne quitte jamais ton enfant des yeux.\n\n" +
+            "STOP IT !";
         L("step 1 OK — managers (GameManager + ScenarioManager + StoryModeDirector + AudioSource)");
 
         // 2. Child NPC
@@ -213,10 +224,35 @@ public static class StoryModeSetup
         var skateRide = SetupSkateboard(skateSpot, skateRot, new[] { wpTop.transform, wpBottom.transform }, story.transform);
         L("step 3d OK — scenario 4 props (skateboard, slide waypoints, hazard)");
 
+        // 3e. Scenario 5 props — upstairs PLAYROOM east window: the real opening sits between the sill U_WallE_b0
+        // (top y3.75) and the lintel U_WallE_l0 (bottom y5.35), z[-6.9..-5.1], at the x-11 wall.
+        var windowCenter = new Vector3(-11.00f, 4.55f, -6.00f); // x-11 = wall centre, so the panes sit EMBEDDED in the wall thickness
+        float winWidth  = 1.8f;  // opening width along the wall (Z)
+        float winHeight = 1.6f;  // opening height (Y): 3.75 → 5.35
+        var hazardSpot  = new Vector3(-10.95f, 3.60f, -6.45f);  // low, in the LEFT (open) half by the bird, so the baby climbs the gap
+        var hazardWindow = CreateHazard("HazardZone_Window", "Window", hazardSpot, 1.8f, story.transform);
+        hazardWindow.silentApproach = true;
+        var spawnS5 = CreateMarker("SpawnChild_S5", hazardSpot, story.transform); // fallback (cfg uses null — the baby walks from the drop)
+        var windowPane = SetupWindowPane(windowCenter, winWidth, winHeight, story.transform);
+        { var wc = windowPane.GetComponent<WindowCloser>(); if (wc != null) wc.targetHazard = hazardWindow; } // explicit wire, no name lookup
+        PigeonEscape pigeonEscape = null;
+        {
+            var pigeonGO = GameObject.Find("Pigeon");
+            if (pigeonGO != null)
+            {
+                pigeonEscape = GetOrAdd<PigeonEscape>(pigeonGO);
+                pigeonEscape.flightOffset = new Vector3(-6f, 3f, 0f); // fly OUTSIDE (-X, away from the house), not inward
+                pigeonEscape.autoTriggerByDistance = false;          // ChildNPC fires it at 80% of the climb, not on approach
+            }
+            else L("[StoryModeSetup] WARNING: 'Pigeon' not found — S5 bird flourish skipped.");
+        }
+        L("step 3e OK — scenario 5 props (window pane, climb hazard, pigeon)");
+
         // 4. UI + EventSystem + lose screen
         var ui = SetupCanvasUI(story.transform);
         SetupLoseScreen(story.transform, director);
-        L("step 4 OK — canvas/UI + EventSystem + lose screen");
+        SetupEndScreen(story.transform, director);
+        L("step 4 OK — canvas/UI + EventSystem + lose + end screens");
 
         // 5. VR hands (Left/Right Controller) — also used by the 4-trigger grab in VR
         SetupControllers();
@@ -291,9 +327,23 @@ public static class StoryModeSetup
                           "Range les objets à roulettes et installe une barrière en haut des marches.",
             failScreenDelay = 0.3f,
         };
-        sm.scenarios = new[] { cfg, cfg2, cfg3, cfg4 };
+        var cfg5 = new ScenarioManager.ScenarioConfig
+        {
+            scenarioName     = "Salle de jeux — La fenêtre",
+            actionHint       = "FERME LA FENÊTRE !",
+            childSpawnPoint  = null,                  // NO teleport — the baby walks from where it was dropped to the window
+            hazardZone       = hazardWindow,
+            playerSpawnPoint = null,
+            scenarioObjects  = new GameObject[0],
+            pigeon           = pigeonEscape,          // ScenarioManager resets it on (re)activation
+            disableDirectChildSave = true,            // must CLOSE the window, not grab the baby
+            loseMessage = "Une fenêtre ouverte en hauteur, c'est un risque de chute mortel.\n" +
+                          "Installe des bloque-fenêtres et ne laisse jamais un meuble sous une fenêtre.",
+            failScreenDelay = 0.3f,                   // the fall-out already played
+        };
+        sm.scenarios = new[] { cfg, cfg2, cfg3, cfg4, cfg5 };
         child.targetHazard = hazardOutlet;
-        L("step 6 OK — ScenarioManager wired (4 scenarios)");
+        L("step 6 OK — ScenarioManager wired (5 scenarios)");
 
         // 7. Bake NavMesh (toddler radius) excluding dynamic objects
         var ignores = new List<Transform> {
@@ -306,6 +356,9 @@ public static class StoryModeSetup
         ignores.Add(hazardSkate.transform); ignores.Add(spawnS4.transform);
         ignores.Add(wpTop.transform); ignores.Add(wpBottom.transform);
         if (skateRide != null) ignores.Add(skateRide.transform);
+        ignores.Add(hazardWindow.transform); ignores.Add(spawnS5.transform);
+        if (windowPane != null) ignores.Add(windowPane.transform);
+        if (pigeonEscape != null) ignores.Add(pigeonEscape.transform);
         BakeStoryNavMesh(child, ignores.ToArray());
         L("step 7 OK — NavMesh baked");
 
@@ -343,6 +396,9 @@ public static class StoryModeSetup
         VerifyPath("S3 microwave -> products", hazardMicro.transform.position, hazardClean.transform.position); // baby continues from ~the microwave (no teleport)
         if (waterGO != null) VerifyPath("S3 water -> products", waterGO.transform.position, hazardClean.transform.position);
         VerifyPath("S4 bathroom -> skateboard (up the stairs)", hazardClean.transform.position, hazardSkate.transform.position);
+        // S5: the window hazard stays at the opening; the child paths to the nearest floor point and climbs.
+        VerifyPath("S5 playroom -> window", skateSpot, hazardWindow.transform.position);
+        VerifyPath("S5 stairs-bottom -> window", stairsBottom, hazardWindow.transform.position);
 
         EditorUtility.SetDirty(gm);
         EditorUtility.SetDirty(sm);
@@ -430,6 +486,10 @@ public static class StoryModeSetup
         var dieClip   = FindClip(AnimDir + "DyingBackwardsBaby.fbx");
         if (drinkClip != null) { var p = so.FindProperty("drinkAnimDuration"); if (p != null) p.floatValue = drinkClip.length; } // let the FULL drink play, then the death
         if (dieClip   != null) { var p = so.FindProperty("dieAnimDuration");   if (p != null) p.floatValue = dieClip.length * 0.9f; }   // most of the death, then the loss
+        var climbClip    = FindClip(AnimDir + "ClimbingWindowBaby.fbx");
+        var fallFlatClip = FindClip(AnimDir + "FallingFlatImpactBaby.fbx");
+        if (climbClip    != null) { var p = so.FindProperty("climbAnimDuration"); if (p != null) p.floatValue = climbClip.length; }        // S5: window must be shut within the full climb
+        if (fallFlatClip != null) { var p = so.FindProperty("fallFlatDuration");  if (p != null) p.floatValue = fallFlatClip.length * 0.9f; } // S5: most of the fall-out, then the loss
         so.ApplyModifiedProperties();
 
         if (go.GetComponent<BabyCatchPrompt>() == null) go.AddComponent<BabyCatchPrompt>();
@@ -460,6 +520,9 @@ public static class StoryModeSetup
         var skate     = ImportAndGetClip(AnimDir + "SkateboardingBaby.fbx", true);              // looping ride
         var jumpSkate = ImportAndGetClip(AnimDir + "JumpingOnSkateBaby.fbx", false);            // mount
         var fallDeath = ImportAndGetClip(AnimDir + "FallingBackDeathBaby.fbx", false, feetGrounded: false); // wall hit // fall flat, not feet-planted
+        var climb     = ImportAndGetClip(AnimDir + "ClimbingWindowBaby.fbx", false);                          // S5: climb the open window
+        var fallFlat  = ImportAndGetClip(AnimDir + "FallingFlatImpactBaby.fbx", false, feetGrounded: false);  // S5: crash on the ground
+        var fall      = ImportAndGetClip(AnimDir + "FallingBaby.fbx", true, feetGrounded: false);             // S5: mid-air fall (loops during the drop)
         var elec  = ImportAndGetClip(AnimDir + "BeingElectrocutedBaby.fbx", false);
         var surp  = ImportAndGetClip(AnimDir + "SurprisedBaby.fbx", false);
         var carry = ImportAndGetClip(AnimDir + "BeingCarriedBaby.fbx", true);
@@ -476,6 +539,9 @@ public static class StoryModeSetup
         ctrl.AddParameter("Die", AnimatorControllerParameterType.Trigger);
         ctrl.AddParameter("JumpSkate", AnimatorControllerParameterType.Trigger);
         ctrl.AddParameter("FallDeath", AnimatorControllerParameterType.Trigger);
+        ctrl.AddParameter("Climb", AnimatorControllerParameterType.Trigger);
+        ctrl.AddParameter("FallFlat", AnimatorControllerParameterType.Trigger);
+        ctrl.AddParameter("Fall", AnimatorControllerParameterType.Trigger);
         ctrl.AddParameter("Electrocute", AnimatorControllerParameterType.Trigger);
         ctrl.AddParameter("Surprised", AnimatorControllerParameterType.Trigger);
         ctrl.AddParameter("Carried", AnimatorControllerParameterType.Bool);
@@ -491,6 +557,9 @@ public static class StoryModeSetup
         var sSkate = sm.AddState("Skate");       sSkate.motion = skate;
         var sJumpSk= sm.AddState("JumpSkate");   sJumpSk.motion= jumpSkate;
         var sFallD = sm.AddState("FallDeath");   sFallD.motion = fallDeath;
+        var sClimb = sm.AddState("Climb");       sClimb.motion = climb;
+        var sFallF = sm.AddState("FallFlat");    sFallF.motion = fallFlat;
+        var sFall  = sm.AddState("Fall");        sFall.motion  = fall;
         var sElec  = sm.AddState("Electrocute"); sElec.motion  = elec;
         var sSurp  = sm.AddState("Surprised");   sSurp.motion  = surp;
         var sCarry = sm.AddState("Carried");     sCarry.motion = carry;
@@ -520,6 +589,12 @@ public static class StoryModeSetup
         tr = sJumpSk.AddTransition(sSkate); tr.hasExitTime = true; tr.exitTime = 0.80f; tr.duration = 0.10f;
         // FallDeath (one-shot wall hit) -> holds the collapsed pose.
         tr = sm.AddAnyStateTransition(sFallD); tr.hasExitTime = false; tr.duration = 0.06f; tr.canTransitionToSelf = false; tr.AddCondition(AnimatorConditionMode.If, 0, "FallDeath");
+        // Climb (S5 window) -> holds at the end; the branch forces FallFlat/FallDeath next.
+        tr = sm.AddAnyStateTransition(sClimb); tr.hasExitTime = false; tr.duration = 0.08f; tr.canTransitionToSelf = false; tr.AddCondition(AnimatorConditionMode.If, 0, "Climb");
+        // FallFlat (S5 crash on the ground) -> holds the collapsed pose.
+        tr = sm.AddAnyStateTransition(sFallF); tr.hasExitTime = false; tr.duration = 0.06f; tr.canTransitionToSelf = false; tr.AddCondition(AnimatorConditionMode.If, 0, "FallFlat");
+        // Fall (S5 mid-air fall) -> loops during the drop; the branch forces FallFlat at the bottom.
+        tr = sm.AddAnyStateTransition(sFall); tr.hasExitTime = false; tr.duration = 0.05f; tr.canTransitionToSelf = false; tr.AddCondition(AnimatorConditionMode.If, 0, "Fall");
         // Electrocute (one-shot) -> Idle.
         tr = sm.AddAnyStateTransition(sElec); tr.hasExitTime = false; tr.duration = 0.05f; tr.canTransitionToSelf = false; tr.AddCondition(AnimatorConditionMode.If, 0, "Electrocute");
         tr = sElec.AddTransition(sIdle); tr.hasExitTime = true; tr.exitTime = 0.95f; tr.duration = 0.20f;
@@ -532,7 +607,7 @@ public static class StoryModeSetup
 
         EditorUtility.SetDirty(ctrl);
         AssetDatabase.SaveAssets();
-        L("[StoryModeSetup] BabyController built (…/Drink/Die/Skate/JumpSkate/FallDeath/Electrocute/Surprised/Carried).");
+        L("[StoryModeSetup] BabyController built (…/Skate/JumpSkate/FallDeath/Climb/FallFlat/Electrocute/Surprised/Carried).");
         return ctrl;
     }
 
@@ -710,12 +785,70 @@ public static class StoryModeSetup
         return ride;
     }
 
+    /// <summary>S5: build/refresh the sliding glass pane that covers the window opening (closed) and slides aside (open).</summary>
+    private static GameObject SetupWindowPane(Vector3 windowCenter, float winWidth, float winHeight, Transform parent)
+    {
+        // ONE transparent glass pane (la vitre) filling the opening — NO frame/mullion. It slides aside (+Z, behind
+        // the wall) to open so the toddler can climb, and the player slides it back to close.
+        foreach (var n in new[] { "WindowPane_S5_Fixed", "WindowMullion_S5" })
+        {
+            var old = GameObject.Find(n);
+            if (old != null) Object.DestroyImmediate(old); // remove the frame parts created by earlier runs
+        }
+        var pane = FindOrCreatePaneCube("WindowPane_S5", parent);
+        pane.transform.SetPositionAndRotation(windowCenter, Quaternion.identity); // CLOSED = covers the opening
+        pane.transform.localScale = new Vector3(0.05f, winHeight, winWidth);       // fills the whole opening
+        { var r = pane.GetComponent<MeshRenderer>(); if (r != null) { r.enabled = true; r.sharedMaterial = MakeGlassMat(); } }
+        var wc = GetOrAdd<WindowCloser>(pane);
+        wc.windowPanel = pane.transform;
+        wc.openOffset = new Vector3(0f, 0f, winWidth); // OPEN = slide aside (+Z, behind the wall); CLOSE slides back
+        wc.slideDuration = 0.5f;
+        wc.interactionRadius = 2.8f;
+        wc.targetHazardName = "HazardZone_Window";
+        wc.reportSuccessOnClose = false;  // ChildNPC's climb beat decides win/lose
+        return pane;
+    }
+
+    /// <summary>Find/create a named cube prop with its colliders off (scripted/static window parts).</summary>
+    private static GameObject FindOrCreatePaneCube(string name, Transform parent)
+    {
+        var go = GameObject.Find(name);
+        if (go == null) { go = GameObject.CreatePrimitive(PrimitiveType.Cube); go.name = name; }
+        go.transform.SetParent(parent, true);
+        foreach (var c in go.GetComponentsInChildren<Collider>(true)) c.enabled = false; // no physics
+        return go;
+    }
+
     private static Material MakeColorMat(Color c)
     {
         var sh = Shader.Find("Universal Render Pipeline/Lit");
         if (sh == null) sh = Shader.Find("Standard");
         var m = new Material(sh) { color = c };
         if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", c);
+        return m;
+    }
+
+    /// <summary>A translucent, glossy glass material (URP transparent) for the window pane — not an opaque cube.</summary>
+    private static Material MakeGlassMat()
+    {
+        var sh = Shader.Find("Universal Render Pipeline/Lit");
+        if (sh == null) sh = Shader.Find("Standard");
+        var m = new Material(sh);
+        Color glass = new Color(0.72f, 0.85f, 0.95f, 0.20f);
+        if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", glass);
+        if (m.HasProperty("_Color"))     m.SetColor("_Color", glass);
+        // URP → Transparent surface (alpha blend).
+        if (m.HasProperty("_Surface")) m.SetFloat("_Surface", 1f);
+        if (m.HasProperty("_Blend"))   m.SetFloat("_Blend", 0f);
+        m.SetOverrideTag("RenderType", "Transparent");
+        m.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+        m.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+        m.SetInt("_ZWrite", 0);
+        m.DisableKeyword("_SURFACE_TYPE_OPAQUE");
+        m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        m.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        if (m.HasProperty("_Smoothness")) m.SetFloat("_Smoothness", 0.92f);
+        if (m.HasProperty("_Metallic"))   m.SetFloat("_Metallic", 0.10f);
         return m;
     }
 
@@ -808,6 +941,47 @@ public static class StoryModeSetup
         grp.alpha = 0f;
         grp.blocksRaycasts = false;
         // GameObject stays active (alpha 0) so StoryLoseScreen's Update/coroutines keep running.
+    }
+
+    private static void SetupEndScreen(Transform parent, StoryModeDirector director)
+    {
+        var go = FindOrCreate("StoryEndScreen");
+        go.transform.SetParent(parent, true);
+
+        var canvas = GetOrAdd<Canvas>(go);
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = 210; // above the lose screen + HUD
+        var scaler = GetOrAdd<CanvasScaler>(go);
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(1920, 1080);
+        GetOrAdd<GraphicRaycaster>(go);
+        var grp = GetOrAdd<CanvasGroup>(go);
+
+        var bg = FindOrCreateChild(go, "BG");
+        var bgImg = GetOrAdd<Image>(bg);
+        bgImg.color = Color.black; // solid black end card
+        var bgrt = (RectTransform)bg.transform;
+        bgrt.anchorMin = Vector2.zero; bgrt.anchorMax = Vector2.one; bgrt.offsetMin = Vector2.zero; bgrt.offsetMax = Vector2.zero;
+
+        var title = MakeTMP(go, "EndTitle", new Vector2(0.5f, 1f), new Vector2(0, -110), new Vector2(1600, 150), 90, TextAlignmentOptions.Center, new Color(0.35f, 0.95f, 0.45f));
+        title.fontStyle = FontStyles.Bold;
+
+        // Scrolling body: a centred, word-wrapped TMP whose RectTransform is moved vertically to scroll (credits).
+        var body = MakeTMP(go, "EndBody", new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(1400, 2400), 40, TextAlignmentOptions.Top, Color.white);
+        body.enableWordWrapping = true;
+
+        var end = GetOrAdd<StoryEndScreen>(go);
+        var so = new SerializedObject(end);
+        SetRef(so, "group", grp);
+        SetRef(so, "titleText", title);
+        SetRef(so, "bodyText", body);
+        SetRef(so, "bodyScroll", body.rectTransform);
+        so.ApplyModifiedProperties();
+
+        director.endScreen = end;
+        grp.alpha = 0f;
+        grp.blocksRaycasts = false;
+        // Stays active (alpha 0) so StoryEndScreen's coroutine runs and Show() works.
     }
 
     private static void SetRef(SerializedObject so, string prop, Object value)

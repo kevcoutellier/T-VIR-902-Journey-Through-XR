@@ -43,6 +43,8 @@ public class WindowCloser : MonoBehaviour, IProximityInteractable
     public HazardZone targetHazard;
     [Tooltip("Hazard GameObject name searched when targetHazard is null.")]
     public string targetHazardName = "HazardZone_Window";
+    [Tooltip("Report success immediately on close. Off for the story window scenario, where ChildNPC decides win/lose by whether the close beat the toddler's climb.")]
+    public bool reportSuccessOnClose = true;
 
     [Header("Testing")]
     [Tooltip("Sandbox helper: arm even when no ScenarioManager is present.")]
@@ -167,12 +169,23 @@ public class WindowCloser : MonoBehaviour, IProximityInteractable
         if (_slide != null) StopCoroutine(_slide);
         if (windowPanel != null) _slide = StartCoroutine(SlideTo(_closedLocalPos));
 
-        // Neutralise the ledge hazard so a same-frame arrival can't flash a fail,
-        // then report the save (which also stops the child via the state change).
+        // Neutralise the ledge hazard so the climbing toddler sees "window closed" and topples back inside.
         if (targetHazard != null) targetHazard.MarkNeutralised();
 
-        Debug.Log("[WindowCloser] Window slid shut — scenario won.", this);
-        GameManager.Instance?.ReportSuccess();
+        // The bird on the sill flies off the instant the window shuts — so we never close it on the bird.
+        var pigeon = FindAnyObjectByType<PigeonEscape>();
+        if (pigeon != null) pigeon.TakeOff();
+
+        if (reportSuccessOnClose)
+        {
+            Debug.Log("[WindowCloser] Window slid shut — scenario won.", this);
+            GameManager.Instance?.ReportSuccess();
+        }
+        else
+        {
+            // Story window: ChildNPC's climb beat owns win/lose (closed-in-time → backward fall → success).
+            Debug.Log("[WindowCloser] Window slid shut — outcome deferred to the climb (neutralised).", this);
+        }
     }
 
     private IEnumerator SlideTo(Vector3 targetLocal)

@@ -42,6 +42,10 @@ public class StoryModeDirector : MonoBehaviour
     [Header("References")]
     [Tooltip("Optional 'you lost' screen shown on a fail before restarting at scenario 1.")]
     public StoryLoseScreen loseScreen;
+    [Tooltip("Black end screen shown at the FINAL scenario: scrolling prevention on victory, held message on defeat. Then back to the menu.")]
+    public StoryEndScreen endScreen;
+    [Tooltip("Prevention message that scrolls on the victory end screen.")]
+    [TextArea(4, 14)] public string victoryMessage = "Ne quitte jamais ton enfant des yeux.";
 
     private ChildNPC _child;
     private bool _busy;
@@ -101,16 +105,31 @@ public class StoryModeDirector : MonoBehaviour
 
         var sm = ScenarioManager.Instance ?? FindAnyObjectByType<ScenarioManager>();
         var cfg = sm != null ? sm.CurrentScenario : null;
+        int idx = sm != null ? sm.CurrentIndex : -1;
+        bool isLast = sm != null && idx >= activeScenarioCount - 1; // failed the FINAL scenario
 
-        // Let the fail beat (electrocution clip / microwave explosion) play out first.
+        // Let the fail beat (electrocution clip / microwave explosion / fall) play out first.
         float delay = cfg != null ? cfg.failScreenDelay : restartDelayOnFail;
         yield return new WaitForSeconds(delay);
 
+        string msg = (cfg != null && !string.IsNullOrEmpty(cfg.loseMessage))
+            ? cfg.loseMessage
+            : "Reste toujours attentif à ton enfant.";
+
+        if (isLast && endScreen != null)
+        {
+            // Failed the LAST scenario → black defeat screen with its prevention message → back to the menu.
+            bool doneD = false;
+            endScreen.Show("TROP TARD…", new Color(1f, 0.3f, 0.25f), msg, false, () => doneD = true);
+            while (!doneD) yield return null;
+            GameManager.Instance?.ReturnToMenu();
+            _busy = false;
+            yield break;
+        }
+
+        // S1–S4 fail → retry screen → restart at scenario 1.
         if (loseScreen != null)
         {
-            string msg = (cfg != null && !string.IsNullOrEmpty(cfg.loseMessage))
-                ? cfg.loseMessage
-                : "Reste toujours attentif à ton enfant.";
             bool retry = false;
             loseScreen.Show("TROP TARD…", msg, () => retry = true);
             while (!retry) yield return null;
@@ -144,10 +163,15 @@ public class StoryModeDirector : MonoBehaviour
         bool lastActive = sm == null || next >= activeScenarioCount || next >= sm.ScenarioCount;
         if (lastActive)
         {
-            // Placeholder terminal until the end screen ships with scenario 5: celebrate, then replay.
-            Debug.Log("[StoryModeDirector] Story complete! (looping back to scenario 1 for now)");
-            yield return new WaitForSeconds(3f);
-            StartStoryMode();
+            // Final scenario saved → victory end screen (scrolling prevention message) → back to the menu.
+            Debug.Log("[StoryModeDirector] Story complete — victory.");
+            if (endScreen != null)
+            {
+                bool done = false;
+                endScreen.Show("BRAVO !", new Color(0.35f, 0.95f, 0.45f), victoryMessage, true, () => done = true);
+                while (!done) yield return null;
+            }
+            GameManager.Instance?.ReturnToMenu();
         }
         else
         {
