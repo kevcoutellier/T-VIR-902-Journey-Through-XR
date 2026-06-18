@@ -151,6 +151,9 @@ public class ChildNPC : MonoBehaviour
     private static readonly int AnimDie = Animator.StringToHash("Die");
     private static readonly int AnimJumpSkate = Animator.StringToHash("JumpSkate");
     private static readonly int AnimFallDeath = Animator.StringToHash("FallDeath");
+    private static readonly int AnimClimb = Animator.StringToHash("Climb");
+    private static readonly int AnimFallFlat = Animator.StringToHash("FallFlat");
+    private static readonly int AnimFall = Animator.StringToHash("Fall");
     private static readonly int AnimSurprised = Animator.StringToHash("Surprised");
     private static readonly int AnimCarried = Animator.StringToHash("Carried");
 
@@ -169,6 +172,16 @@ public class ChildNPC : MonoBehaviour
     [SerializeField] private float jumpSkateDuration = 1.0f;
     [Tooltip("Pause (s) for the wall-hit death animation before the loss is reported.")]
     [SerializeField] private float fallDeathDuration = 2.0f;
+    [Tooltip("Time (s) the toddler spends climbing the window — the player must close it before this elapses.")]
+    [SerializeField] private float climbAnimDuration = 3.0f;
+    [Tooltip("Pause (s) for the ground-crash animation before the loss is reported.")]
+    [SerializeField] private float fallFlatDuration = 2.0f;
+    [Tooltip("Air time (s) of the fall OUT the window (mid-air FallingBaby) before the ground crash.")]
+    [SerializeField] private float fallTravelDuration = 1.2f;
+    [Tooltip("How far past the window (m) the toddler lands outside.")]
+    [SerializeField] private float windowFallOutDistance = 1.5f;
+    [Tooltip("Fallback drop height (m) if no ground is found below the window.")]
+    [SerializeField] private float windowFallDropHeight = 5.0f;
     private SkateboardRide _skateboardRide;
     private GameObject[] _s3Products;
     private Vector3 _s3ItemLocalPos = new Vector3(0f, 0f, 0.04f);
@@ -755,6 +768,7 @@ public class ChildNPC : MonoBehaviour
         bool isMicrowave = hzName == "Microwave";
         bool isCleaningProduct = hzName == "Cleaning Product";
         bool isSkateboard = hzName == "Skateboard";
+        bool isWindow = hzName == "Window";
 
         if (isOutlet)
         {
@@ -865,6 +879,91 @@ public class ChildNPC : MonoBehaviour
             if (_skateboardRide != null) _skateboardRide.Begin(this);
             else Debug.LogError("[ChildNPC] S4: no SkateboardRide in the scene — the baby can't ride.", this);
             ArmCatch(); // on the skate and rolling → the catch (and its hint) goes live
+            yield break;
+        }
+        else if (isWindow)
+        {
+            var windowPigeon = FindAnyObjectByType<PigeonEscape>();
+
+            // Closed BEFORE the toddler even starts climbing → no climb, no backward fall; the bird leaves too. Success.
+            if (targetHazard != null && targetHazard.IsNeutralised)
+            {
+                if (windowPigeon != null) windowPigeon.TakeOff();
+                _isStopped = true;
+                _isMoving = false;
+                if (_agent != null && _agent.isActiveAndEnabled && _agent.isOnNavMesh) _agent.isStopped = true;
+                targetHazard.TriggerHazard(); // already neutralised → success sequence → ReportSuccess
+                yield break;
+            }
+
+            // Climb the OPEN window after the bird. The player must close it before the climb finishes:
+            //   • closed MID-climb (hazard neutralised) → topples BACK inside (reuse FallDeath/FallingBack) → success.
+            //   • climb completes uninterrupted          → crests the ledge and falls OUT (FallFlat) → fail.
+            if (animator != null) animator.SetTrigger(AnimClimb);
+            bool pigeonFlown = false;
+            float climbed = 0f;
+            bool closedInTime = false;
+            while (climbed < climbAnimDuration)
+            {
+                if (_held || _isStopped) yield break;
+                if (targetHazard != null && targetHazard.IsNeutralised) { closedInTime = true; break; }
+                if (!pigeonFlown && climbed >= climbAnimDuration * 0.8f) // the bird startles at 80% of the climb
+                {
+                    pigeonFlown = true;
+                    if (windowPigeon != null) windowPigeon.TakeOff();
+                }
+                climbed += Time.deltaTime;
+                yield return null;
+            }
+
+            // Stop for the fall; disable the agent so the fall clip's root motion can play.
+            _isStopped = true;
+            _isMoving = false;
+            if (_agent != null && _agent.enabled)
+            {
+                if (_agent.isOnNavMesh) _agent.isStopped = true;
+                _agent.enabled = false;
+            }
+
+            if (closedInTime)
+            {
+                // Window shut before the toddler crested → the bird flies off too (don't shut it on the bird),
+                // and the toddler topples backward, safe inside.
+                if (windowPigeon != null) windowPigeon.TakeOff();
+                if (animator != null) { animator.ResetTrigger(AnimClimb); animator.SetTrigger(AnimFallDeath); animator.Play("FallDeath", 0, 0f); }
+                yield return new WaitForSeconds(0.5f); // let the backward fall read before the success banner
+                if (targetHazard != null) targetHazard.TriggerHazard(); // neutralised → success sequence → ReportSuccess
+                yield break;
+            }
+
+            // Too late / never closed → the toddler crests the ledge and falls OUT the window to the ground below:
+            // mid-air fall (FallingBaby, loops) during the drop, then the crash (FallFlat) on the OUTSIDE ground.
+            Vector3 startPos = transform.position;
+            Vector3 hazardPos = targetHazard != null ? targetHazard.transform.position : startPos;
+            Vector3 outDir = new Vector3(hazardPos.x - startPos.x, 0f, hazardPos.z - startPos.z);
+            outDir = outDir.sqrMagnitude > 0.01f ? outDir.normalized : transform.forward;
+            Vector3 endXZ = new Vector3(hazardPos.x, 0f, hazardPos.z) + outDir * windowFallOutDistance; // past the window = outside
+            float groundY = startPos.y - windowFallDropHeight; // fallback if the raycast misses
+            if (Physics.Raycast(new Vector3(endXZ.x, startPos.y + 1f, endXZ.z), Vector3.down, out RaycastHit groundHit, 60f, ~0, QueryTriggerInteraction.Ignore))
+                groundY = groundHit.point.y;
+            Vector3 landPos = new Vector3(endXZ.x, groundY, endXZ.z);
+
+            if (animator != null) { animator.ResetTrigger(AnimClimb); animator.SetTrigger(AnimFall); animator.Play("Fall", 0, 0f); }
+            float ft = 0f;
+            while (ft < fallTravelDuration)
+            {
+                float u = ft / fallTravelDuration;
+                Vector3 p = Vector3.Lerp(startPos, landPos, u);
+                p.y = Mathf.Lerp(startPos.y, landPos.y, u * u); // accelerate downward (gravity-ish)
+                transform.position = p;
+                ft += Time.deltaTime;
+                yield return null;
+            }
+            transform.position = landPos;
+
+            if (animator != null) { animator.ResetTrigger(AnimFall); animator.SetTrigger(AnimFallFlat); animator.Play("FallFlat", 0, 0f); }
+            yield return new WaitForSeconds(fallFlatDuration);
+            GameManager.Instance?.ReportFail();
             yield break;
         }
 
@@ -1212,6 +1311,9 @@ public class ChildNPC : MonoBehaviour
         animator.ResetTrigger(AnimDie);
         animator.ResetTrigger(AnimJumpSkate);
         animator.ResetTrigger(AnimFallDeath);
+        animator.ResetTrigger(AnimClimb);
+        animator.ResetTrigger(AnimFallFlat);
+        animator.ResetTrigger(AnimFall);
         animator.SetBool(AnimCarried, false);
         animator.SetFloat(AnimSpeed, 0f);
         animator.Play("Idle", 0, 0f);
