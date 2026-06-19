@@ -68,8 +68,17 @@ public static class QuestBuildTools
         // Keep "Run In Background" off — Quest pauses the app on dashboard
         PlayerSettings.runInBackground = false;
 
+        // Make HousePreview (the story-mode game) the STARTUP scene; keep the old scenes (disabled) for future modes.
+        const string GameScene = "Assets/_Scenes/Sandboxes/HousePreview.unity";
+        var others = EditorBuildSettings.scenes
+            .Where(s => s.path != GameScene)
+            .Select(s => new EditorBuildSettingsScene(s.path, false));
+        EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(GameScene, true) }
+            .Concat(others)
+            .ToArray();
+
         AssetDatabase.SaveAssets();
-        Debug.Log("[STOP IT] Android settings configured for Quest 3 (ARM64 / IL2CPP / Vulkan).");
+        Debug.Log("[STOP IT] Android settings configured + HousePreview set as the startup build scene (old scenes kept, disabled).");
     }
 
     // ── Build ──────────────────────────────────────────────────────────────
@@ -96,27 +105,38 @@ public static class QuestBuildTools
             return;
         }
 
+        // Force the app identifier every build — otherwise it ships as the URP-template default
+        // package (com.UnityTechnologies...urpblank), which collides with that template app and
+        // makes STOP IT impossible to find cleanly in the Quest library.
+        PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.Android, DefaultIdentifier);
+
         Directory.CreateDirectory(OutputDir);
         string apkName = $"{ProductName.Replace(' ', '_')}-{DateTime.Now:yyyyMMdd-HHmm}.apk";
         string fullPath = Path.Combine(OutputDir, apkName);
 
-        var scenes = EditorBuildSettings.scenes
-            .Where(s => s.enabled)
-            .Select(s => s.path)
-            .ToArray();
-
-        if (scenes.Length == 0)
+        // The playable game (menu + 5 scenarios + end screens) lives in the HousePreview scene; build THAT,
+        // regardless of EditorBuildSettings (which may still point at the old LivingRoom scene).
+        const string GameScene = "Assets/_Scenes/Sandboxes/HousePreview.unity";
+        string[] scenes;
+        if (File.Exists(GameScene))
         {
-            // Fall back to the currently open scene to avoid an empty build.
-            var current = EditorSceneManager.GetActiveScene();
-            if (string.IsNullOrEmpty(current.path))
-            {
-                EditorUtility.DisplayDialog("No scene", "Add at least one scene to Build Settings, or open the LivingRoom scene.", "OK");
-                return;
-            }
-            scenes = new[] { current.path };
-            Debug.LogWarning("[STOP IT] No scenes in Build Settings — falling back to active scene: " + current.path);
+            scenes = new[] { GameScene };
         }
+        else
+        {
+            scenes = EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path).ToArray();
+            if (scenes.Length == 0)
+            {
+                var current = EditorSceneManager.GetActiveScene();
+                if (string.IsNullOrEmpty(current.path))
+                {
+                    EditorUtility.DisplayDialog("No scene", "Open HousePreview, or add a scene to Build Settings.", "OK");
+                    return;
+                }
+                scenes = new[] { current.path };
+            }
+        }
+        Debug.Log("[STOP IT] Build scene(s): " + string.Join(", ", scenes));
 
         var opts = new BuildPlayerOptions
         {

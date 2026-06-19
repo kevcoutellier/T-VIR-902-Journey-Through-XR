@@ -379,6 +379,18 @@ public class MenuScenarioShowcase : MonoBehaviour
 
         var single = MakeBigButton(root, "Jouer ce scénario", new Color(1f, 1f, 1f, 0.14f), Color.white, OnPlayCurrent);
         BottomLeft((RectTransform)single.transform, 500, 90, 360, 76);
+
+        var turn = MakeBigButton(root, ViewModeLabel(), new Color(0.18f, 0.45f, 0.85f, 0.95f), Color.white, OnToggleViewMode);
+        BottomLeft((RectTransform)turn.transform, 880, 90, 420, 76);
+        _viewModeText = turn.GetComponentInChildren<TextMeshProUGUI>();
+    }
+
+    private TextMeshProUGUI _viewModeText;
+    private static string ViewModeLabel() => "Vue : " + (XRLocomotionBinder.ManualTurnMode ? "Manuel (joystick)" : "Immersif (tête)");
+    private void OnToggleViewMode()
+    {
+        XRLocomotionBinder.ManualTurnMode = !XRLocomotionBinder.ManualTurnMode;
+        if (_viewModeText != null) _viewModeText.text = ViewModeLabel();
     }
 
     // ─────────────────────────────────────────────────────────────

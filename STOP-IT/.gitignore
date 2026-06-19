@@ -46,3 +46,6 @@ sysinfo.txt
 
 # TextMesh Pro
 Assets/TextMesh Pro/
+
+# Quest build intermediates (Bee/CMake/ninja)
+.utmp/
