@@ -52,7 +52,12 @@ public class MenuScenarioShowcase : MonoBehaviour
     [Tooltip("Seconds for the lower-third cross-fade when the room changes.")]
     public float fadeDuration = 0.45f;
 
-    [Header("World-space placement (VR + 2D)")]
+    [Header("Display")]
+    [Tooltip("OFF = full-screen overlay (2D / desktop, like the original menu). " +
+             "ON = world-space panel that floats in front of the player (VR).")]
+    public bool worldSpace = false;
+
+    [Header("World-space placement (VR)")]
     [Tooltip("Distance (m) in front of the player the menu panel floats.")]
     public float followDistance = 2.2f;
     [Tooltip("Vertical offset (m) relative to eye height.")]
@@ -130,7 +135,7 @@ public class MenuScenarioShowcase : MonoBehaviour
 
     private void LateUpdate()
     {
-        if (_canvas == null || !_canvas.enabled) return;
+        if (!worldSpace || _canvas == null || !_canvas.enabled) return;
 
         if (_camT == null)
         {
@@ -273,18 +278,31 @@ public class MenuScenarioShowcase : MonoBehaviour
 
         _canvas = gameObject.GetComponent<Canvas>();
         if (_canvas == null) _canvas = gameObject.AddComponent<Canvas>();
-        // World-space so it renders in the HMD (overlay canvases don't) AND on a 2D screen.
-        _canvas.renderMode = RenderMode.WorldSpace;
-        if (_canvas.worldCamera == null) _canvas.worldCamera = Camera.main;
 
         var root = (RectTransform)transform;
-        // 1920×1080 "pixel" canvas scaled so 1px = 1mm → ~1.92m × 1.08m floating panel.
-        root.sizeDelta = new Vector2(1920, 1080);
-        root.localScale = Vector3.one * 0.001f;
 
-        // Both raycasters: XR ray pointers (controllers) and mouse/touch.
-        if (gameObject.GetComponent<TrackedDeviceGraphicRaycaster>() == null)
-            gameObject.AddComponent<TrackedDeviceGraphicRaycaster>();
+        if (worldSpace)
+        {
+            // VR: floating world-space panel (overlay canvases don't render in the HMD).
+            _canvas.renderMode = RenderMode.WorldSpace;
+            if (_canvas.worldCamera == null) _canvas.worldCamera = Camera.main;
+            root.sizeDelta = new Vector2(1920, 1080);
+            root.localScale = Vector3.one * 0.001f; // 1px = 1mm → ~1.92m × 1.08m panel
+            if (gameObject.GetComponent<TrackedDeviceGraphicRaycaster>() == null)
+                gameObject.AddComponent<TrackedDeviceGraphicRaycaster>();
+        }
+        else
+        {
+            // 2D / desktop: full-screen overlay, scaled to the screen.
+            _canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            _canvas.sortingOrder = 100;
+            var scaler = gameObject.GetComponent<CanvasScaler>();
+            if (scaler == null) scaler = gameObject.AddComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920, 1080);
+            scaler.matchWidthOrHeight = 0.5f;
+        }
+
         if (gameObject.GetComponent<GraphicRaycaster>() == null)
             gameObject.AddComponent<GraphicRaycaster>();
         BuildTitle(root);

@@ -22,7 +22,7 @@ using UnityEngine.Events;
 [DefaultExecutionOrder(20)]
 public class MenuCameraTour : MonoBehaviour
 {
-    public enum ComfortMode { Glide, TeleportFade }
+    public enum ComfortMode { Glide, TeleportFade, Follow }
 
     [Header("Path")]
     [Tooltip("Ordered poses, one per room. If empty, children named 'WP*'/'Waypoint*' are collected.")]
@@ -35,8 +35,25 @@ public class MenuCameraTour : MonoBehaviour
     public Transform tourTarget;
 
     [Header("Comfort")]
-    [Tooltip("Glide = smooth dolly (2D camera). TeleportFade = fade + snap (VR-comfortable, drives the rig).")]
+    [Tooltip("Glide = smooth dolly through waypoints. TeleportFade = fade + snap (VR, drives the rig). " +
+             "Follow = camera trails the roaming NPCs around the house.")]
     public ComfortMode comfortMode = ComfortMode.Glide;
+
+    [Header("Follow mode")]
+    [Tooltip("NPCs the camera follows in Follow mode. Auto-found (MenuRoamingNPC) if empty.")]
+    public List<Transform> followTargets = new List<Transform>();
+    [Tooltip("How far behind the followed NPC the camera trails (m).")]
+    public float followBackDistance = 3f;
+    [Tooltip("Camera height above the NPC's feet while following (m).")]
+    public float followHeight = 1.8f;
+    [Tooltip("Height on the NPC the camera aims at (m).")]
+    public float followLookHeight = 0.9f;
+    [Tooltip("Position smoothing time (s). Higher = lazier, smoother follow.")]
+    public float followSmoothTime = 0.5f;
+    [Tooltip("How fast the camera re-aims at the NPC (deg/s feel).")]
+    public float followAimLerp = 4f;
+    [Tooltip("Seconds before the camera switches to the other NPC.")]
+    public float followSwitchInterval = 10f;
 
     [Tooltip("Fader used by TeleportFade. Auto-found if left null.")]
     public MenuFader fader;
@@ -92,6 +109,11 @@ public class MenuCameraTour : MonoBehaviour
     private Quaternion _jumpStartRot;
     private float      _autoPausedUntil;
 
+    // Follow mode.
+    private int     _followIndex;
+    private float   _followTimer;
+    private Vector3 _followVel;
+
     private readonly List<Camera> _suppressedCams = new List<Camera>();
 
     // ── Unity ──────────────────────────────────────────────────────────────
@@ -105,6 +127,12 @@ public class MenuCameraTour : MonoBehaviour
     private void Start()
     {
         if (waypoints.Count == 0) AutoCollectWaypoints();
+
+        if (comfortMode == ComfortMode.Follow && followTargets.Count == 0)
+        {
+            foreach (var npc in FindObjectsByType<MenuRoamingNPC>(FindObjectsSortMode.None))
+                followTargets.Add(npc.transform);
+        }
 
         if (GameManager.Instance != null)
         {
@@ -208,10 +236,63 @@ public class MenuCameraTour : MonoBehaviour
         if (!_running || waypoints.Count == 0 || tourTarget == null) return;
         if (_transitioning) return;
 
+        if (comfortMode == ComfortMode.Follow) { FollowUpdate(); return; }
+
         if (waypoints.Count == 1) { SetPose(0); return; }
 
         if (comfortMode == ComfortMode.TeleportFade) { TeleportUpdate(); return; }
         GlideUpdate();
+    }
+
+    // ── Follow ───────────────────────────────────────────────────────────────
+    private void FollowUpdate()
+    {
+        // Drop any destroyed targets.
+        for (int i = followTargets.Count - 1; i >= 0; i--)
+            if (followTargets[i] == null) followTargets.RemoveAt(i);
+        if (followTargets.Count == 0) return;
+
+        // Cycle which NPC we follow so the camera tours the whole house.
+        _followTimer += Time.deltaTime;
+        if (followTargets.Count > 1 && _followTimer >= followSwitchInterval)
+        {
+            _followIndex = (_followIndex + 1) % followTargets.Count;
+            _followTimer = 0f;
+        }
+        if (_followIndex >= followTargets.Count) _followIndex = 0;
+
+        Transform tgt = followTargets[_followIndex];
+        if (tgt == null) return;
+
+        // Trail behind the NPC (use its facing; fall back to the current camera→NPC line).
+        Vector3 fwd = tgt.forward; fwd.y = 0f;
+        if (fwd.sqrMagnitude < 0.01f) { fwd = tgt.position - tourTarget.position; fwd.y = 0f; }
+        if (fwd.sqrMagnitude < 0.01f) fwd = Vector3.forward;
+        fwd.Normalize();
+
+        Vector3 desired = tgt.position - fwd * followBackDistance + Vector3.up * followHeight;
+        tourTarget.position = Vector3.SmoothDamp(tourTarget.position, desired, ref _followVel, followSmoothTime);
+
+        Vector3 lookDir = (tgt.position + Vector3.up * followLookHeight) - tourTarget.position;
+        if (lookDir.sqrMagnitude > 0.0001f)
+            tourTarget.rotation = Quaternion.Slerp(tourTarget.rotation,
+                Quaternion.LookRotation(lookDir, Vector3.up), followAimLerp * Time.deltaTime);
+
+        // Keep the showcase in sync with whichever scenario room the NPC is in.
+        int near = NearestStop(tgt.position);
+        if (near >= 0 && near != _fromIndex) { _fromIndex = near; Arrive(near); }
+    }
+
+    private int NearestStop(Vector3 pos)
+    {
+        int best = -1; float bestSqr = float.MaxValue;
+        for (int i = 0; i < waypoints.Count; i++)
+        {
+            if (waypoints[i] == null) continue;
+            float d = (waypoints[i].position - pos).sqrMagnitude;
+            if (d < bestSqr) { bestSqr = d; best = i; }
+        }
+        return best;
     }
 
     // ── TeleportFade ───────────────────────────────────────────────────────
