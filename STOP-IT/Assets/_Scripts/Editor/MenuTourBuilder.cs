@@ -3,37 +3,26 @@ using UnityEngine;
 using UnityEngine.AI;
 using UnityEditor;
 using UnityEditor.SceneManagement;
+using Unity.XR.CoreUtils;
 
 /// <summary>
-/// Editor tool that builds the cinematic menu background into the CURRENTLY OPEN
-/// scene: a dolly "MenuCamera" that tours every room (via <see cref="MenuCameraTour"/>)
-/// plus two characters strolling the house (via <see cref="MenuRoamingNPC"/>).
+/// Editor tool that builds the cinematic menu into the CURRENTLY OPEN scene
+/// (HousePreview / any house). It adapts to the actual house by deriving the
+/// camera waypoints from the real per-scenario anchors in the scene (the
+/// ScenarioManager configs, or SpawnChild_S1..S5 markers) — no hard-coded room
+/// coordinates.
 ///
-/// Usage (LivingRoom.unity is lock-protected — claim docs/SCENE_LOCK.md first):
-///   1. Open LivingRoom.unity in Unity.
-///   2. Tools ▸ STOP IT ▸ Build Menu Tour.
-///   3. Inspect / tweak the generated "MenuTour" hierarchy, then save the scene.
+/// VR + 2D: if an XR Origin is present, the tour drives the rig with a comfort
+/// fade (TeleportFade) so the player is whisked room-to-room without nauseating
+/// motion; otherwise it falls back to a dedicated dolly Camera (Glide) for 2D.
+/// The menu UI (MenuScenarioShowcase) is a world-space panel that floats in front
+/// of the player, so it renders both in the HMD and on a 2D screen.
 ///
-/// Re-running deletes and rebuilds the previous "MenuTour" root so it's idempotent.
-/// Waypoint poses use the room coordinates from <see cref="HouseBuilder"/>; the two
-/// NPCs are placeholder capsules you can swap for the real toddler/dad meshes.
+/// Re-running deletes and rebuilds "MenuTour" — idempotent. The two strollers are
+/// placeholder capsules to swap for the real character meshes.
 /// </summary>
 public static class MenuTourBuilder
 {
-    // Room camera poses: (position, lookAt). Coordinates match HouseBuilder's layout.
-    private struct Pose { public string name; public Vector3 pos; public Vector3 look; }
-
-    // One stop per scenario room, in scenario order (Salon, Cuisine, Escalier, SdB, Chambre/fenêtre).
-    private static readonly Pose[] CameraStops =
-    {
-        new Pose { name = "WP_Salon",    pos = new Vector3(-1.5f, 1.8f,  1.8f), look = new Vector3(-5.0f, 1.0f,  4.5f) },
-        new Pose { name = "WP_Cuisine",  pos = new Vector3( 1.5f, 1.8f,  1.8f), look = new Vector3( 5.0f, 1.0f,  4.5f) },
-        new Pose { name = "WP_Escalier", pos = new Vector3( 1.5f, 1.8f, -1.8f), look = new Vector3( 5.0f, 1.0f, -4.5f) },
-        new Pose { name = "WP_SdB",      pos = new Vector3(-1.5f, 1.8f, -1.8f), look = new Vector3(-5.0f, 1.0f, -4.5f) },
-        new Pose { name = "WP_Chambre",  pos = new Vector3( 1.5f, 4.6f, -1.8f), look = new Vector3( 5.0f, 3.8f, -4.5f) },
-    };
-
-    // Objective line shown under each scenario title in the showcase (per scenario index).
     private static readonly string[] Objectives =
     {
         "Empêche l'enfant d'enfoncer une fourchette dans la prise.",
@@ -43,93 +32,192 @@ public static class MenuTourBuilder
         "Il grimpe sur le rebord pour attraper un pigeon.",
     };
 
-    // Roam points the two strollers wander between (ground-floor room centres + corridor).
-    private static readonly Vector3[] RoamPoints =
+    // Used only if NO scenario anchors are found in the scene (legacy HouseBuilder layout).
+    private static readonly Vector3[] FallbackAnchors =
     {
-        new Vector3(-3.5f, 0f,  3.5f), // Salon
-        new Vector3( 3.5f, 0f,  3.5f), // Cuisine
-        new Vector3(-3.5f, 0f, -3.5f), // SdB
-        new Vector3( 3.5f, 0f, -3.5f), // Escalier
-        new Vector3( 0.0f, 0f,  0.0f), // Couloir
+        new Vector3(-5f, 0f,  4.5f), new Vector3(5f, 0f, 4.5f),
+        new Vector3( 5f, 0f, -4.5f), new Vector3(-5f, 0f, -4.5f),
+        new Vector3( 5f, 3f, -4.5f),
     };
+
+    private const float ViewDistance = 2.6f; // how far the camera/rig stands back from the anchor
+    private const float EyeHeight    = 1.6f;  // camera height above the floor in 2D (Glide) mode
 
     [MenuItem("Tools/STOP IT/Build Menu Tour")]
     public static void BuildMenuTour()
     {
-        // Idempotent: nuke any previous build.
         var previous = GameObject.Find("MenuTour");
         if (previous != null) Undo.DestroyObjectImmediate(previous);
 
         var root = new GameObject("MenuTour");
         Undo.RegisterCreatedObjectUndo(root, "Build Menu Tour");
 
-        var tour = BuildCamera(root.transform);
-        var roamParent = BuildRoamPoints(root.transform);
-        BuildRoamer(root.transform, "MenuStroller_A", new Vector3(-3.5f, 0f, 3.5f), roamParent, sequential: false);
-        BuildRoamer(root.transform, "MenuStroller_B", new Vector3( 3.5f, 0f, -3.5f), roamParent, sequential: true);
-        BuildShowcase(root.transform, tour);
+        // 1. Where is each scenario? (real anchors in this house)
+        var anchors = CollectScenarioAnchors();
+        Vector3 centroid = Centroid(anchors);
 
-        // Mark the scene dirty so the user is prompted to save.
-        EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
-        Selection.activeGameObject = root;
+        var xrOrigin = Object.FindAnyObjectByType<XROrigin>();
+        bool vr = xrOrigin != null;
 
-        Debug.Log("[STOP IT] Menu Tour built: dolly camera + 5 scenario waypoints + 2 strollers + " +
-                  "scenario showcase UI. Swap the placeholder capsules for the real character meshes, " +
-                  "then save the scene. Bake the NavMesh if the strollers don't move.");
-    }
-
-    // ── Camera + waypoints ────────────────────────────────────────────────
-    private static MenuCameraTour BuildCamera(Transform parent)
-    {
-        var camGO = new GameObject("MenuCamera");
-        camGO.transform.SetParent(parent, false);
-        Undo.RegisterCreatedObjectUndo(camGO, "Menu Camera");
-
-        var cam = camGO.AddComponent<Camera>();
-        cam.clearFlags = CameraClearFlags.Skybox;
-        cam.depth = 10;            // render on top of the gameplay/XR camera while active
-        cam.fieldOfView = 60f;
-        cam.nearClipPlane = 0.05f;
-
-        var tour = camGO.AddComponent<MenuCameraTour>();
-
-        // Waypoints live on a STATIC holder under MenuTour — never under the camera,
-        // or they'd move with it and the spline would chase fleeing targets (jitter).
+        // 2. Waypoints (static holder), one pose per scenario.
         var wpHolder = new GameObject("Waypoints");
-        wpHolder.transform.SetParent(parent, false);
-        Undo.RegisterCreatedObjectUndo(wpHolder, "Menu Waypoints");
+        wpHolder.transform.SetParent(root.transform, false);
+        Undo.RegisterCreatedObjectUndo(wpHolder, "Waypoints");
 
-        // Create one waypoint Transform per room stop, posed + oriented.
-        var wps = new List<Transform>(CameraStops.Length);
-        foreach (var stop in CameraStops)
+        var wps = new List<Transform>();
+        for (int i = 0; i < anchors.Count; i++)
         {
-            var wp = new GameObject(stop.name);
+            ComputeStopPose(anchors[i], centroid, vr, out Vector3 pos, out Quaternion rot);
+            var wp = new GameObject($"WP_S{i + 1}");
             wp.transform.SetParent(wpHolder.transform, false);
-            wp.transform.position = stop.pos;
-            wp.transform.rotation = Quaternion.LookRotation((stop.look - stop.pos).normalized, Vector3.up);
-            Undo.RegisterCreatedObjectUndo(wp, "Menu Waypoint");
+            wp.transform.SetPositionAndRotation(pos, rot);
+            Undo.RegisterCreatedObjectUndo(wp, "Waypoint");
             wps.Add(wp.transform);
         }
 
+        // 3. Comfort fader (used by TeleportFade).
+        var faderGO = new GameObject("MenuFader");
+        faderGO.transform.SetParent(root.transform, false);
+        var fader = faderGO.AddComponent<MenuFader>();
+        Undo.RegisterCreatedObjectUndo(faderGO, "Menu Fader");
+
+        // 4. Tour driver.
+        var tour = BuildTour(root.transform, wps, vr ? xrOrigin.transform : null, fader, out Camera dollyCam);
+
+        // 5. Roam points + strollers (ground-floor anchors).
+        var roamParent = BuildRoamPoints(root.transform, anchors);
+        if (roamParent.Count > 0)
+        {
+            BuildRoamer(root.transform, "MenuStroller_A", roamParent[0].position, roamParent, sequential: false);
+            BuildRoamer(root.transform, "MenuStroller_B",
+                        roamParent[Mathf.Min(1, roamParent.Count - 1)].position, roamParent, sequential: true);
+        }
+
+        // 6. World-space scenario showcase UI.
+        BuildShowcase(root.transform, tour, anchors.Count);
+
+        EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+        Selection.activeGameObject = root;
+
+        Debug.Log($"[STOP IT] Menu Tour built for the current house — {anchors.Count} room stops " +
+                  $"({(vr ? "VR: rig teleport-fade" : "2D: dolly camera glide")}). " +
+                  "Nudge the WP_S* transforms under MenuTour/Waypoints to frame each room, swap the " +
+                  "stroller capsules, bake the NavMesh, then save the scene.");
+    }
+
+    // ── Scenario anchors ──────────────────────────────────────────────────
+    /// <summary>
+    /// One world-space "look at" point per scenario, in order. Prefers the
+    /// ScenarioManager configs (hazard zone, else child spawn); falls back to
+    /// SpawnChild_S1..S5 markers, then to legacy coordinates.
+    /// </summary>
+    private static List<Vector3> CollectScenarioAnchors()
+    {
+        var result = new List<Vector3>();
+
+        var sm = Object.FindAnyObjectByType<ScenarioManager>();
+        if (sm != null && sm.scenarios != null && sm.scenarios.Length > 0)
+        {
+            foreach (var cfg in sm.scenarios)
+            {
+                if (cfg.hazardZone != null)      result.Add(cfg.hazardZone.transform.position);
+                else if (cfg.childSpawnPoint != null) result.Add(cfg.childSpawnPoint.position);
+            }
+            if (result.Count > 0) return result;
+        }
+
+        for (int i = 1; i <= 5; i++)
+        {
+            var marker = GameObject.Find($"SpawnChild_S{i}");
+            if (marker != null) result.Add(marker.transform.position);
+        }
+        if (result.Count > 0) return result;
+
+        result.AddRange(FallbackAnchors);
+        return result;
+    }
+
+    private static Vector3 Centroid(List<Vector3> pts)
+    {
+        if (pts.Count == 0) return Vector3.zero;
+        Vector3 c = Vector3.zero;
+        foreach (var p in pts) c += p;
+        return c / pts.Count;
+    }
+
+    /// <summary>
+    /// Camera/rig pose that frames the anchor: stand back from it toward the house
+    /// interior (centroid). VR = floor height, yaw only (HMD adds pitch + head height);
+    /// 2D = eye height, looking slightly down at the anchor.
+    /// </summary>
+    private static void ComputeStopPose(Vector3 anchor, Vector3 centroid, bool vr,
+                                        out Vector3 pos, out Quaternion rot)
+    {
+        Vector3 dir = centroid - anchor; dir.y = 0f;
+        if (dir.sqrMagnitude < 0.01f) dir = Vector3.forward;
+        dir.Normalize();
+
+        pos = anchor + dir * ViewDistance;
+        if (vr)
+        {
+            pos.y = anchor.y; // rig stands on the floor
+            Vector3 flat = anchor - pos; flat.y = 0f;
+            rot = flat.sqrMagnitude > 0.001f ? Quaternion.LookRotation(flat, Vector3.up) : Quaternion.identity;
+        }
+        else
+        {
+            pos.y = anchor.y + EyeHeight;
+            Vector3 look = (anchor + Vector3.up * 0.8f) - pos;
+            rot = look.sqrMagnitude > 0.001f ? Quaternion.LookRotation(look, Vector3.up) : Quaternion.identity;
+        }
+    }
+
+    // ── Tour driver ──────────────────────────────────────────────────────
+    private static MenuCameraTour BuildTour(Transform parent, List<Transform> wps, Transform rig,
+                                            MenuFader fader, out Camera dollyCam)
+    {
+        dollyCam = null;
+        GameObject host;
+
+        if (rig != null)
+        {
+            // VR: a plain controller object drives the XR rig with a comfort fade.
+            host = new GameObject("TourController");
+            host.transform.SetParent(parent, false);
+        }
+        else
+        {
+            // 2D: a dedicated dolly camera glides through the rooms.
+            host = new GameObject("MenuCamera");
+            host.transform.SetParent(parent, false);
+            dollyCam = host.AddComponent<Camera>();
+            dollyCam.clearFlags = CameraClearFlags.Skybox;
+            dollyCam.depth = 10;
+            dollyCam.fieldOfView = 60f;
+            dollyCam.nearClipPlane = 0.05f;
+        }
+        Undo.RegisterCreatedObjectUndo(host, "Tour Host");
+
+        var tour = host.AddComponent<MenuCameraTour>();
         tour.waypoints = wps;
-        tour.tourTarget = camGO.transform;
+        tour.tourTarget = rig != null ? rig : host.transform;
+        tour.comfortMode = rig != null ? MenuCameraTour.ComfortMode.TeleportFade : MenuCameraTour.ComfortMode.Glide;
+        tour.fader = fader;
+        tour.fadeDuration = 0.4f;
         tour.loop = true;
-        tour.travelTime = 7f;       // slow, gentle glide
-        tour.dwellTime = 4f;        // linger in each room so the scenario reads
+        tour.travelTime = 7f;
+        tour.dwellTime = 4f;
         tour.autoAdvance = true;
         tour.autoResumeDelay = 8f;
         tour.onlyDuringMenu = true;
         tour.snapToFirstOnStart = true;
 
-        // Start the camera on the first stop so the Scene view preview reads right.
-        camGO.transform.SetPositionAndRotation(wps[0].position, wps[0].rotation);
-
         EditorUtility.SetDirty(tour);
         return tour;
     }
 
-    // ── Scenario showcase UI ──────────────────────────────────────────────
-    private static void BuildShowcase(Transform parent, MenuCameraTour tour)
+    // ── Showcase UI ────────────────────────────────────────────────────────
+    private static void BuildShowcase(Transform parent, MenuCameraTour tour, int stops)
     {
         var go = new GameObject("MenuShowcase", typeof(RectTransform));
         go.transform.SetParent(parent, false);
@@ -138,38 +226,45 @@ public static class MenuTourBuilder
         var showcase = go.AddComponent<MenuScenarioShowcase>();
         showcase.cameraTour = tour;
         showcase.scenarioManager = Object.FindAnyObjectByType<ScenarioManager>();
-        // 5 camera stops map 1:1 to scenarios 0..4 (Salon, Cuisine, Escalier, SdB, fenêtre).
-        showcase.scenarioPerStop = new[] { 0, 1, 2, 3, 4 };
+
+        var map = new int[stops];
+        for (int i = 0; i < stops; i++) map[i] = i; // 1:1 stop → scenario
+        showcase.scenarioPerStop = map;
         showcase.objectiveOverrides = (string[])Objectives.Clone();
 
         EditorUtility.SetDirty(showcase);
     }
 
-    // ── Roam points ──────────────────────────────────────────────────────
-    private static List<Transform> BuildRoamPoints(Transform parent)
+    // ── Roam points + strollers ─────────────────────────────────────────────
+    private static List<Transform> BuildRoamPoints(Transform parent, List<Vector3> anchors)
     {
         var holder = new GameObject("RoamPoints");
         holder.transform.SetParent(parent, false);
         Undo.RegisterCreatedObjectUndo(holder, "Roam Points");
 
-        var pts = new List<Transform>(RoamPoints.Length);
-        for (int i = 0; i < RoamPoints.Length; i++)
+        // Ground-floor anchors only (so strollers stay on the main floor / NavMesh).
+        var pts = new List<Transform>();
+        float minY = float.MaxValue;
+        foreach (var a in anchors) minY = Mathf.Min(minY, a.y);
+
+        int idx = 0;
+        foreach (var a in anchors)
         {
-            var p = new GameObject($"Roam_{i}");
-            p.transform.SetParent(holder.transform, false);
-            p.transform.position = RoamPoints[i];
-            Undo.RegisterCreatedObjectUndo(p, "Roam Point");
-            pts.Add(p.transform);
+            if (a.y > minY + 1.5f) continue; // skip upstairs anchors
+            Vector3 p = a;
+            if (NavMesh.SamplePosition(a, out NavMeshHit hit, 3f, NavMesh.AllAreas)) p = hit.position;
+            var go = new GameObject($"Roam_{idx++}");
+            go.transform.SetParent(holder.transform, false);
+            go.transform.position = p;
+            Undo.RegisterCreatedObjectUndo(go, "Roam Point");
+            pts.Add(go.transform);
         }
         return pts;
     }
 
-    // ── Strollers ────────────────────────────────────────────────────────
     private static void BuildRoamer(Transform parent, string name, Vector3 startPos,
                                     List<Transform> roamPoints, bool sequential)
     {
-        // Placeholder body (a capsule) so the NPC is visible out of the box. The user
-        // swaps in the real rigged mesh under "Mesh" afterwards.
         var npc = new GameObject(name);
         npc.transform.SetParent(parent, false);
         npc.transform.position = startPos;
@@ -178,9 +273,9 @@ public static class MenuTourBuilder
         var mesh = GameObject.CreatePrimitive(PrimitiveType.Capsule);
         mesh.name = "Mesh";
         var meshCol = mesh.GetComponent<Collider>();
-        if (meshCol != null) Object.DestroyImmediate(meshCol); // NavMeshAgent handles avoidance; no physics collider needed
+        if (meshCol != null) Object.DestroyImmediate(meshCol);
         mesh.transform.SetParent(npc.transform, false);
-        mesh.transform.localPosition = new Vector3(0f, 1f, 0f); // capsule pivot is centre; lift so feet ~ floor
+        mesh.transform.localPosition = new Vector3(0f, 1f, 0f);
         mesh.transform.localScale = new Vector3(0.5f, 0.6f, 0.5f);
 
         var agent = npc.AddComponent<NavMeshAgent>();

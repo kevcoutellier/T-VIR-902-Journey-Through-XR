@@ -4,6 +4,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.UI;
 using UnityEngine.UI;
+using UnityEngine.XR.Interaction.Toolkit.UI;
 using TMPro;
 
 /// <summary>
@@ -51,6 +52,16 @@ public class MenuScenarioShowcase : MonoBehaviour
     [Tooltip("Seconds for the lower-third cross-fade when the room changes.")]
     public float fadeDuration = 0.45f;
 
+    [Header("World-space placement (VR + 2D)")]
+    [Tooltip("Distance (m) in front of the player the menu panel floats.")]
+    public float followDistance = 2.2f;
+    [Tooltip("Vertical offset (m) relative to eye height.")]
+    public float verticalOffset = -0.1f;
+    [Tooltip("How quickly the panel drifts to follow the head (lower = lazier).")]
+    public float followLerpSpeed = 4f;
+    [Tooltip("Panel re-centres once the head has turned past this angle (degrees).")]
+    public float recenterAngle = 35f;
+
     // ── UI runtime ────────────────────────────────────────────────────────────
     private Canvas          _canvas;
     private CanvasGroup     _lowerThirdGroup;
@@ -65,6 +76,11 @@ public class MenuScenarioShowcase : MonoBehaviour
     private bool _subscribed;
     private int  _currentScenario = -1;
     private Coroutine _fadeRoutine;
+
+    // World-space head-follow.
+    private Transform _camT;
+    private Vector3   _targetPos;
+    private bool      _hasTarget;
 
     private static readonly Color ListIdle   = new Color(1f, 1f, 1f, 0.06f);
     private static readonly Color ListActive = new Color(1f, 1f, 1f, 0.16f);
@@ -109,6 +125,43 @@ public class MenuScenarioShowcase : MonoBehaviour
     private void SetVisible(bool on)
     {
         if (_canvas != null) _canvas.enabled = on;
+        if (on) _hasTarget = false; // re-centre in front of the player when (re)shown
+    }
+
+    private void LateUpdate()
+    {
+        if (_canvas == null || !_canvas.enabled) return;
+
+        if (_camT == null)
+        {
+            var c = Camera.main;
+            if (c == null) return;
+            _camT = c.transform;
+            if (_canvas.worldCamera == null) _canvas.worldCamera = c;
+        }
+
+        Vector3 fwd = _camT.forward; fwd.y = 0f;
+        if (fwd.sqrMagnitude < 0.001f) fwd = Vector3.forward;
+        fwd.Normalize();
+
+        Vector3 ideal = _camT.position + fwd * followDistance + Vector3.up * verticalOffset;
+
+        if (!_hasTarget)
+        {
+            _targetPos = ideal;
+            transform.position = ideal;
+            _hasTarget = true;
+        }
+        else
+        {
+            Vector3 toPanel = transform.position - _camT.position; toPanel.y = 0f;
+            if (toPanel.sqrMagnitude > 0.001f && Vector3.Angle(fwd, toPanel.normalized) > recenterAngle)
+                _targetPos = ideal;
+            transform.position = Vector3.Lerp(transform.position, _targetPos, followLerpSpeed * Time.deltaTime);
+        }
+
+        Vector3 lookDir = transform.position - _camT.position;
+        if (lookDir.sqrMagnitude > 0.001f) transform.rotation = Quaternion.LookRotation(lookDir);
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -220,19 +273,20 @@ public class MenuScenarioShowcase : MonoBehaviour
 
         _canvas = gameObject.GetComponent<Canvas>();
         if (_canvas == null) _canvas = gameObject.AddComponent<Canvas>();
-        _canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-        _canvas.sortingOrder = 100;
-
-        var scaler = gameObject.GetComponent<CanvasScaler>();
-        if (scaler == null) scaler = gameObject.AddComponent<CanvasScaler>();
-        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-        scaler.referenceResolution = new Vector2(1920, 1080);
-        scaler.matchWidthOrHeight = 0.5f;
-
-        if (gameObject.GetComponent<GraphicRaycaster>() == null)
-            gameObject.AddComponent<GraphicRaycaster>();
+        // World-space so it renders in the HMD (overlay canvases don't) AND on a 2D screen.
+        _canvas.renderMode = RenderMode.WorldSpace;
+        if (_canvas.worldCamera == null) _canvas.worldCamera = Camera.main;
 
         var root = (RectTransform)transform;
+        // 1920×1080 "pixel" canvas scaled so 1px = 1mm → ~1.92m × 1.08m floating panel.
+        root.sizeDelta = new Vector2(1920, 1080);
+        root.localScale = Vector3.one * 0.001f;
+
+        // Both raycasters: XR ray pointers (controllers) and mouse/touch.
+        if (gameObject.GetComponent<TrackedDeviceGraphicRaycaster>() == null)
+            gameObject.AddComponent<TrackedDeviceGraphicRaycaster>();
+        if (gameObject.GetComponent<GraphicRaycaster>() == null)
+            gameObject.AddComponent<GraphicRaycaster>();
         BuildTitle(root);
         BuildLowerThird(root);
         BuildScenarioList(root);
