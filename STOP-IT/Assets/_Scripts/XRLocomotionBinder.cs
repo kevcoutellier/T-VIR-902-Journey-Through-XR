@@ -49,11 +49,28 @@ public class XRLocomotionBinder : MonoBehaviour
     [Tooltip("Sphere radius (m) around each hand used to detect the child NPC. Bigger = more forgiving (don't have to hug the kid). ChildGrabber default is 0.30; we bump it for VR because pushing a tracked hand right onto a moving toddler is finicky.")]
     [Range(0.1f, 1.0f)] public float vrGrabRadius = 0.50f;
 
+    [Header("Comfort / height")]
+    [Tooltip("Eye height (m) above the floor — fixed so a seated player isn't child-sized.")]
+    public float eyeHeight = 1.6f;
+    [Tooltip("Keep the rig on the floor under the player (lets you walk up small steps, e.g. the kitchen).")]
+    public bool groundFollow = true;
+    [Tooltip("Vertical settle speed (m/s) for ground-follow.")]
+    public float groundFollowSpeed = 4f;
+    [Tooltip("Max step height (m) the player can walk up — kitchen / bathroom thresholds.")]
+    public float stepHeight = 0.4f;
+
+    [Header("View turning")]
+    [Tooltip("FALSE = immersive (turn with your head). TRUE = manual (right stick smoothly turns the view). Toggled from the menu.")]
+    public static bool ManualTurnMode = false;
+    [Tooltip("Smooth-turn speed (deg/s) for manual mode — as fluid as the left stick is for moving.")]
+    public float smoothTurnSpeed = 110f;
+
     // Internal state
     private XROrigin  _xrOrigin;
     private Transform _cameraTransform;
     private InputAction _moveAction;
     private InputAction _menuToggleAction; // Y button or Menu button
+    private InputAction _turnAction;       // right thumbstick → manual smooth-turn
     // The 4 "triggers" that must be held TOGETHER to grab: index trigger + grip on
     // BOTH hands. Holding all 4 grabs the baby (or takes the cat / closes the window
     // / picks up the bottle); releasing any one drops it. Replaces the old A/X grab.
@@ -99,7 +116,11 @@ public class XRLocomotionBinder : MonoBehaviour
         foreach (var map in actionAsset.actionMaps)
             map.Enable();
 
-        // ── Force floor-level tracking ────────────────────────────
+        // ── Floor tracking (head AND hands at real height) ────────
+        // Device origin + CameraYOffset raised the CONTROLLERS too, so the hands floated ~1.6 m up:
+        // the baby became ungrabbable and standing read too tall (head clipped door frames). Floor
+        // tracking keeps hands at their real height = grabbable; ground-follow (see Update) handles
+        // steps. Stand for the demo (a SEATED player reads low — inherent to room-scale floor tracking).
         if (_xrOrigin != null)
             _xrOrigin.RequestedTrackingOriginMode = XROrigin.TrackingOriginMode.Floor;
 
@@ -158,6 +179,12 @@ public class XRLocomotionBinder : MonoBehaviour
             _menuToggleAction.performed += OnMenuToggle;
             Debug.Log($"[XRLocomotionBinder] Menu toggle action bound: '{_menuToggleAction.actionMap.name} > {_menuToggleAction.name}'");
         }
+
+        // ── Right thumbstick → manual snap-turn (only applied when ManualTurnMode is on) ──
+        _turnAction = actionAsset.FindActionMap("XRI Right Locomotion")?.FindAction("Turn")
+                   ?? actionAsset.FindActionMap("XRI Right")?.FindAction("Thumbstick")
+                   ?? actionAsset.FindActionMap("XRI Right")?.FindAction("Primary2DAxis");
+        _turnAction?.Enable();
 
         // ── Grab → hold ALL 4 triggers together (index trigger + grip, both hands) ──
         // Per design: the baby (and the cat / window / bottle verbs) are grabbed by
@@ -345,6 +372,13 @@ public class XRLocomotionBinder : MonoBehaviour
         // movement early-out (which bails when no move action is bound).
         UpdateFourTriggerGrab();
 
+        // Turning + ground-follow must run even when there's no joystick movement.
+        if (_xrOrigin != null && _cameraTransform != null)
+        {
+            UpdateManualTurn();
+            if (groundFollow) UpdateGroundFollow();
+        }
+
         if (_moveAction == null || _xrOrigin == null || _cameraTransform == null) return;
 
         // Read left thumbstick
@@ -367,6 +401,29 @@ public class XRLocomotionBinder : MonoBehaviour
         _xrOrigin.transform.position += move;
     }
 
+    private void UpdateManualTurn()
+    {
+        // Manual view = smooth continuous yaw from the RIGHT stick (as fluid as the left stick moves).
+        // (Head tracking still applies — it cannot be disabled in VR — but the stick now drives the view.)
+        if (!ManualTurnMode || _turnAction == null) return;
+        float x = _turnAction.ReadValue<Vector2>().x;
+        if (Mathf.Abs(x) < 0.15f) return; // deadzone
+        _xrOrigin.transform.RotateAround(_cameraTransform.position, Vector3.up, x * smoothTurnSpeed * Time.deltaTime);
+    }
+
+    private void UpdateGroundFollow()
+    {
+        // Keep the rig's Y on the floor directly under the head so the eye stays ~eyeHeight above
+        // whatever floor the player is on, and small steps (e.g. the kitchen threshold) can be entered.
+        Vector3 head = _cameraTransform.position;
+        if (Physics.Raycast(head + Vector3.up * 0.1f, Vector3.down, out RaycastHit hit, 4f, wallMask, QueryTriggerInteraction.Ignore))
+        {
+            Vector3 op = _xrOrigin.transform.position;
+            op.y = Mathf.MoveTowards(op.y, hit.point.y, groundFollowSpeed * Time.deltaTime);
+            _xrOrigin.transform.position = op;
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────
     /// <summary>
     /// Slide along walls instead of going through them.
@@ -376,7 +433,7 @@ public class XRLocomotionBinder : MonoBehaviour
     {
         Vector3 camPos = _cameraTransform.position;
         // Capsule from feet to head, centered on the camera horizontally.
-        Vector3 bottom = new Vector3(camPos.x, _xrOrigin.transform.position.y + playerRadius, camPos.z);
+        Vector3 bottom = new Vector3(camPos.x, _xrOrigin.transform.position.y + Mathf.Max(playerRadius, stepHeight), camPos.z);
         Vector3 top    = bottom + Vector3.up * Mathf.Max(0.01f, playerHeight - playerRadius * 2f);
 
         Vector3 dir = desiredMove.normalized;

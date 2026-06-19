@@ -80,6 +80,8 @@ public class StoryLoseScreen : MonoBehaviour
         var mouse = Mouse.current;
         if (mouse != null && mouse.leftButton.wasPressedThisFrame)
             retry = true;
+        if (VRInput.AnyTriggerDown()) // VR: pull any index trigger to retry
+            retry = true;
 
         if (retry)
         {

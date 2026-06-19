@@ -97,7 +97,8 @@ public class StoryEndScreen : MonoBehaviour
         var kb = Keyboard.current;
         if (kb != null && (kb.eKey.wasPressedThisFrame || kb.spaceKey.wasPressedThisFrame || kb.enterKey.wasPressedThisFrame)) return true;
         var mouse = Mouse.current;
-        return mouse != null && mouse.leftButton.wasPressedThisFrame;
+        if (mouse != null && mouse.leftButton.wasPressedThisFrame) return true;
+        return VRInput.AnyTriggerDown(); // VR: pull any index trigger to skip
     }
 
     private IEnumerator Fade(float target)
