@@ -441,6 +441,11 @@ public class XRLocomotionBinder : MonoBehaviour
 
         if (Physics.CapsuleCast(bottom, top, playerRadius, dir, out RaycastHit hit, dist + 0.02f, wallMask, QueryTriggerInteraction.Ignore))
         {
+            // Walkable slope (the stair ramp is ≈42°)? Don't treat it as a wall — allow the move and
+            // let UpdateGroundFollow carry the player up/down it. Only near-vertical faces (real walls,
+            // normal.y ≈ 0) still block. 0.5 ≈ slopes up to 60°.
+            if (hit.normal.y > 0.5f) return desiredMove;
+
             // Slide: project the remaining motion along the wall plane.
             Vector3 normal = hit.normal; normal.y = 0f;
             if (normal.sqrMagnitude < 1e-4f) return Vector3.zero;
