@@ -205,6 +205,7 @@ public class HazardZone : MonoBehaviour
         // Running: only the light turns on (no sparks yet — the cat is still intact).
         EnsureMicrowaveLight();
         if (microwaveLight != null) microwaveLight.enabled = true;
+        GameAudio.Loop("sfx_microwave"); // S2: the microwave runs (looped, stopped at the explosion so it never overruns the ~2 s run)
 
         yield return new WaitForSeconds(Mathf.Max(0.1f, microwaveRunSeconds));
 
@@ -216,6 +217,8 @@ public class HazardZone : MonoBehaviour
             sparks.Play();
             sparks.Emit(140);
         }
+        GameAudio.StopLoop("sfx_microwave"); // silence the running hum
+        GameAudio.PlayAt("sfx_microwave_explosion", transform.position); // S2: the cat explodes
         CameraShake.Shake(0.28f, 0.22f);
         if (zapClip != null)
         {
@@ -225,6 +228,7 @@ public class HazardZone : MonoBehaviour
 
         // Hold a beat so the explosion is clearly visible before the lose screen fades in.
         yield return new WaitForSeconds(0.4f);
+        GameAudio.Play("sfx_baby_cry"); // S2: the toddler cries as the game-over screen comes
         GameManager.Instance?.ReportFail();
     }
 

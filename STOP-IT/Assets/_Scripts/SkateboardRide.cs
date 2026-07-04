@@ -65,6 +65,7 @@ public class SkateboardRide : MonoBehaviour
 
     private void OnStateChanged(GameManager.GameState state)
     {
+        GameAudio.StopLoop("sfx_baby_skate"); // S4: stop the rolling loop on any state change (caught / crashed / next scenario)
         // Reset to home only on a (re)start — NOT on Success, so a mid-ride catch lets the empty board
         // finish rolling to the bottom before the next scenario resets it.
         if (state != GameManager.GameState.Playing) return;
@@ -84,6 +85,7 @@ public class SkateboardRide : MonoBehaviour
         _child = child;
         _wp = 0;
         _riding = true;
+        GameAudio.Loop("sfx_baby_skate"); // S4: rolling loop until the ride ends
     }
 
     private void Update()

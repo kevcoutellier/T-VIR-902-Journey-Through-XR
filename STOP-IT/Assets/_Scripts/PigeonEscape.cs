@@ -95,6 +95,7 @@ public class PigeonEscape : MonoBehaviour
     private IEnumerator FlyAway()
     {
         _flying = true;
+        GameAudio.PlayAt("sfx_bird_flyaway", transform.position); // S5: the pigeon takes off
         Vector3 start = transform.position;
         Vector3 end = start + flightOffset;
         Vector3 startScale = transform.localScale;

@@ -104,7 +104,7 @@ public static class StoryModeSetup
         var hazardOutlet = CreateHazard("HazardZone_Outlet", "Electrical Outlet",
                                         new Vector3(-0.13f, 0.40f, -6.00f), 1.5f, story.transform);
         var spawnPosS1  = new Vector3(-8.00f, 0f, -6.80f);
-        var pickupPosS1 = new Vector3(-9.80f, 0f, -9.60f);
+        var pickupPosS1 = new Vector3(-9.20f, 0f, -8.70f); // moved forward so the S1 fork clears the S2 microwave chair
         Vector3 approachDir = pickupPosS1 - spawnPosS1; approachDir.y = 0f; approachDir.Normalize();
         var spawnS1  = CreateMarker("SpawnChild_S1",     spawnPosS1, story.transform);
         var pickupS1 = CreateMarker("PickupWaypoint_S1", pickupPosS1, story.transform);
@@ -521,6 +521,7 @@ public static class StoryModeSetup
         var jumpSkate = ImportAndGetClip(AnimDir + "JumpingOnSkateBaby.fbx", false);            // mount
         var fallDeath = ImportAndGetClip(AnimDir + "FallingBackDeathBaby.fbx", false, feetGrounded: false); // wall hit // fall flat, not feet-planted
         var climb     = ImportAndGetClip(AnimDir + "ClimbingWindowBaby.fbx", false);                          // S5: climb the open window
+        var climbChair = ImportAndGetClip(AnimDir + "ClimbingChairBaby.fbx", false);                          // S2: climb the chair under the microwave
         var fallFlat  = ImportAndGetClip(AnimDir + "FallingFlatImpactBaby.fbx", false, feetGrounded: false);  // S5: crash on the ground
         var fall      = ImportAndGetClip(AnimDir + "FallingBaby.fbx", true, feetGrounded: false);             // S5: mid-air fall (loops during the drop)
         var elec  = ImportAndGetClip(AnimDir + "BeingElectrocutedBaby.fbx", false);
@@ -540,6 +541,7 @@ public static class StoryModeSetup
         ctrl.AddParameter("JumpSkate", AnimatorControllerParameterType.Trigger);
         ctrl.AddParameter("FallDeath", AnimatorControllerParameterType.Trigger);
         ctrl.AddParameter("Climb", AnimatorControllerParameterType.Trigger);
+        ctrl.AddParameter("ClimbChair", AnimatorControllerParameterType.Trigger);
         ctrl.AddParameter("FallFlat", AnimatorControllerParameterType.Trigger);
         ctrl.AddParameter("Fall", AnimatorControllerParameterType.Trigger);
         ctrl.AddParameter("Electrocute", AnimatorControllerParameterType.Trigger);
@@ -558,6 +560,7 @@ public static class StoryModeSetup
         var sJumpSk= sm.AddState("JumpSkate");   sJumpSk.motion= jumpSkate;
         var sFallD = sm.AddState("FallDeath");   sFallD.motion = fallDeath;
         var sClimb = sm.AddState("Climb");       sClimb.motion = climb;
+        var sClimbChair = sm.AddState("ClimbChair"); sClimbChair.motion = climbChair;
         var sFallF = sm.AddState("FallFlat");    sFallF.motion = fallFlat;
         var sFall  = sm.AddState("Fall");        sFall.motion  = fall;
         var sElec  = sm.AddState("Electrocute"); sElec.motion  = elec;
@@ -591,6 +594,8 @@ public static class StoryModeSetup
         tr = sm.AddAnyStateTransition(sFallD); tr.hasExitTime = false; tr.duration = 0.06f; tr.canTransitionToSelf = false; tr.AddCondition(AnimatorConditionMode.If, 0, "FallDeath");
         // Climb (S5 window) -> holds at the end; the branch forces FallFlat/FallDeath next.
         tr = sm.AddAnyStateTransition(sClimb); tr.hasExitTime = false; tr.duration = 0.08f; tr.canTransitionToSelf = false; tr.AddCondition(AnimatorConditionMode.If, 0, "Climb");
+        // ClimbChair (S2 chair) -> holds at the end; ChildNPC then triggers PutCat (the AnyState PutCat transition takes over).
+        tr = sm.AddAnyStateTransition(sClimbChair); tr.hasExitTime = false; tr.duration = 0.08f; tr.canTransitionToSelf = false; tr.AddCondition(AnimatorConditionMode.If, 0, "ClimbChair");
         // FallFlat (S5 crash on the ground) -> holds the collapsed pose.
         tr = sm.AddAnyStateTransition(sFallF); tr.hasExitTime = false; tr.duration = 0.06f; tr.canTransitionToSelf = false; tr.AddCondition(AnimatorConditionMode.If, 0, "FallFlat");
         // Fall (S5 mid-air fall) -> loops during the drop; the branch forces FallFlat at the bottom.
@@ -609,6 +614,30 @@ public static class StoryModeSetup
         AssetDatabase.SaveAssets();
         L("[StoryModeSetup] BabyController built (…/Skate/JumpSkate/FallDeath/Climb/FallFlat/Electrocute/Surprised/Carried).");
         return ctrl;
+    }
+
+    /// <summary>
+    /// Targeted rebuild of the baby AnimatorController (re-imports/wires the clips, incl. the S2 ClimbChair)
+    /// and reassigns it to the scene's 'Child' — WITHOUT re-running the whole Setup Story (no NavMesh
+    /// re-bake, no spawn/hazard/fork reset). Save the scene afterward (Ctrl+S).
+    /// </summary>
+    [MenuItem("Tools/STOP IT/Rebuild Baby Controller")]
+    public static void RebuildBabyController()
+    {
+        var ctrl = BuildBabyController();
+        var children = Object.FindObjectsByType<ChildNPC>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        var anim = (children != null && children.Length > 0) ? children[0].GetComponentInChildren<Animator>(true) : null;
+        if (anim != null)
+        {
+            anim.runtimeAnimatorController = ctrl;
+            EditorUtility.SetDirty(anim);
+            UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(anim.gameObject.scene);
+            L("[StoryModeSetup] Rebuilt BabyController + reassigned to '" + anim.gameObject.name + "'. Save the scene (Ctrl+S).");
+        }
+        else
+        {
+            L("[StoryModeSetup] Rebuilt BabyController, but no ChildNPC Animator found in the open scene.");
+        }
     }
 
     /// <summary>Import an animation FBX (Generic, looped or one-shot) and return its first AnimationClip.</summary>
