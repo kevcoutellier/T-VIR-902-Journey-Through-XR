@@ -152,6 +152,7 @@ public class ChildNPC : MonoBehaviour
     private static readonly int AnimJumpSkate = Animator.StringToHash("JumpSkate");
     private static readonly int AnimFallDeath = Animator.StringToHash("FallDeath");
     private static readonly int AnimClimb = Animator.StringToHash("Climb");
+    private static readonly int AnimClimbChair = Animator.StringToHash("ClimbChair");
     private static readonly int AnimFallFlat = Animator.StringToHash("FallFlat");
     private static readonly int AnimFall = Animator.StringToHash("Fall");
     private static readonly int AnimSurprised = Animator.StringToHash("Surprised");
@@ -174,6 +175,18 @@ public class ChildNPC : MonoBehaviour
     [SerializeField] private float fallDeathDuration = 2.0f;
     [Tooltip("Time (s) the toddler spends climbing the window — the player must close it before this elapses.")]
     [SerializeField] private float climbAnimDuration = 3.0f;
+    [Tooltip("Freeze the S2 chair-climb clip at this fraction of its length (0-1); its tail dips the toddler back down, so cut it early (~0.35 = 35%).")]
+    [Range(0f, 1f)]
+    [SerializeField] private float chairClimbAnimFraction = 0.35f;
+    [Tooltip("Playback speed of the S2 chair-climb clip (1 = normal); lower = the toddler climbs more slowly.")]
+    [Range(0.1f, 1f)]
+    [SerializeField] private float chairClimbSpeed = 0.5f;
+    [Tooltip("Safety cap (s): force the freeze if the clip hasn't reached chairClimbAnimFraction by then.")]
+    [SerializeField] private float chairClimbDuration = 3.0f;
+    [Tooltip("How high (m) the toddler rises onto the chair seat to reach the counter-top microwave.")]
+    [SerializeField] private float microwaveChairClimbRise = 0.45f;
+    [Tooltip("World XZ of the S2 chair seat — the toddler climbs ONTO this spot (not its raw NavMesh arrival). Match it to Chair_Microwave.")]
+    [SerializeField] private Vector3 microwaveClimbPos = new Vector3(-9.8f, 0f, -10.0f);
     [Tooltip("Pause (s) for the ground-crash animation before the loss is reported.")]
     [SerializeField] private float fallFlatDuration = 2.0f;
     [Tooltip("Air time (s) of the fall OUT the window (mid-air FallingBaby) before the ground crash.")]
@@ -783,8 +796,48 @@ public class ChildNPC : MonoBehaviour
         }
         else if (isMicrowave)
         {
+            // The microwave sits on the counter, out of a toddler's reach — so the child first CLIMBS the
+            // chair placed under it (same climb as the window: AnimClimb), rising onto the seat, then
+            // reaches up and puts the cat inside. The cat stays grabbable throughout the climb, so taking
+            // it (CatGrab) still wins — that cancels this routine via OnGameStateChanged.
+            if (_agent != null && _agent.enabled)
+            {
+                if (_agent.isOnNavMesh) _agent.isStopped = true;
+                _agent.enabled = false; // lift the child onto the chair manually (off the NavMesh)
+            }
+            Vector3 floorPos = transform.position; // NavMesh arrival near the microwave
+            // Climb ONTO the chair's fixed spot (not the raw arrival) so the toddler ends up on the chair,
+            // gliding from where it stopped onto the seat over the climb.
+            Vector3 seatPos  = new Vector3(microwaveClimbPos.x, floorPos.y + microwaveChairClimbRise, microwaveClimbPos.z);
+            // Play the chair-climb clip and glide the root onto the seat IN SYNC with it, then FREEZE it at
+            // chairClimbAnimFraction — the clip's tail dips the toddler back down / reaches over the counter,
+            // so we cut it early. chairClimbDuration is only a safety cap.
+            if (animator != null) { animator.speed = Mathf.Max(0.05f, chairClimbSpeed); animator.Play("ClimbChair", 0, 0f); }
+            yield return null; // let the state switch so normalizedTime reads from ClimbChair
+            float cut = Mathf.Clamp01(chairClimbAnimFraction);
+            float ct = 0f;
+            while (ct < chairClimbDuration)
+            {
+                if (_held || _isStopped) yield break;
+                float frac = 0f;
+                if (animator != null)
+                {
+                    var st = animator.GetCurrentAnimatorStateInfo(0);
+                    if (st.IsName("ClimbChair")) frac = st.normalizedTime;
+                }
+                transform.position = Vector3.Lerp(floorPos, seatPos, cut > 0.001f ? Mathf.Clamp01(frac / cut) : 1f);
+                if (frac >= cut) break;
+                ct += Time.deltaTime;
+                yield return null;
+            }
+            transform.position = seatPos;
+            if (targetHazard != null) FaceToward(targetHazard.transform.position); // face the microwave
+
+            // Standing on the seat now — play the put-cat reach (this transition cuts the climb clip at
+            // chairClimbAnimFraction, so its low tail never plays), then drop the cat into the microwave.
             if (animator != null)
             {
+                animator.speed = 1f;
                 animator.SetTrigger(AnimPutCat);
                 yield return new WaitForSeconds(putCatAnimDuration);
                 if (_held || _isStopped) yield break; // saved during the put-cat beat
@@ -793,7 +846,6 @@ public class ChildNPC : MonoBehaviour
             // Freeze the child; the microwave (HazardZone.MicrowaveSequence) runs then explodes.
             _isStopped = true;
             _isMoving = false;
-            if (_agent != null && _agent.isActiveAndEnabled && _agent.isOnNavMesh) _agent.isStopped = true;
         }
         else if (isCleaningProduct)
         {
@@ -830,6 +882,7 @@ public class ChildNPC : MonoBehaviour
 
             // Drink it FULLY (water or poison).
             if (animator != null) animator.SetTrigger(AnimDrink);
+            GameAudio.PlayAt("sfx_baby_drink", transform.position); // S3: gulps the bottle (water or product)
             yield return new WaitForSeconds(drinkAnimDuration);
             if (_held || _isStopped) yield break;
 
@@ -1190,6 +1243,7 @@ public class ChildNPC : MonoBehaviour
                 if (_agent != null && _agent.isActiveAndEnabled && _agent.isOnNavMesh)
                     _agent.isStopped = true;
                 if (animator != null) animator.SetTrigger(AnimElectrocute);
+                GameAudio.PlayAt("sfx_electrocution", transform.position); // S1: the zap
                 // With a rigged animator, the BeingElectrocuted clip handles the visual —
                 // skip the procedural jitter so the two don't fight.
                 if (animator == null || animator.runtimeAnimatorController == null)
@@ -1312,10 +1366,12 @@ public class ChildNPC : MonoBehaviour
         animator.ResetTrigger(AnimJumpSkate);
         animator.ResetTrigger(AnimFallDeath);
         animator.ResetTrigger(AnimClimb);
+        animator.ResetTrigger(AnimClimbChair);
         animator.ResetTrigger(AnimFallFlat);
         animator.ResetTrigger(AnimFall);
         animator.SetBool(AnimCarried, false);
         animator.SetFloat(AnimSpeed, 0f);
+        animator.speed = 1f; // un-freeze in case a frozen S2 chair-climb pose left speed at 0
         animator.Play("Idle", 0, 0f);
     }
 

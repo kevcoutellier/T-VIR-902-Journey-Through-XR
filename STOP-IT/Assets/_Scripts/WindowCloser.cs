@@ -166,6 +166,7 @@ public class WindowCloser : MonoBehaviour, IProximityInteractable
         if (_prompt != null) _prompt.SetActive(false);
 
         // Slide the pane shut.
+        GameAudio.PlayAt("sfx_close_window", transform.position); // S5: sliding the window shut
         if (_slide != null) StopCoroutine(_slide);
         if (windowPanel != null) _slide = StartCoroutine(SlideTo(_closedLocalPos));
 
