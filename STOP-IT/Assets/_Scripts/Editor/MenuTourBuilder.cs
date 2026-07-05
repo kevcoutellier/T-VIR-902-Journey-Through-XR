@@ -20,6 +20,11 @@ using UnityEditor.SceneManagement;
 /// </summary>
 public static class MenuTourBuilder
 {
+    // Real baby assets (shared with the gameplay child built by StoryModeSetup) — the menu
+    // strollers use the same rigged, animated model instead of a capsule placeholder.
+    private const string WalkingBabyPath    = "Assets/_ThirdParty/Models/WalkingBaby.fbx";
+    private const string BabyControllerPath = "Assets/_ThirdParty/Models/BabyController.controller";
+
     private static readonly string[] Objectives =
     {
         "Empêche l'enfant d'enfoncer une fourchette dans la prise.",
@@ -94,8 +99,8 @@ public static class MenuTourBuilder
         Selection.activeGameObject = root;
 
         Debug.Log($"[STOP IT] Menu Tour built — {anchors.Count} rooms. The MenuCamera follows the two " +
-                  "strollers around the house; the showcase shows the scenario of the room they're in. " +
-                  "Swap the stroller capsules for real meshes, bake the NavMesh, then save the scene. " +
+                  "strollers (real WalkingBaby, animated) around the house; the showcase shows the scenario " +
+                  "of the room they're in. Bake the NavMesh if the house changed, then save the scene. " +
                   "For VR: set MenuCamera ▸ comfortMode = TeleportFade and MenuShowcase ▸ worldSpace = true.");
     }
 
@@ -236,13 +241,9 @@ public static class MenuTourBuilder
         npc.transform.position = startPos;
         Undo.RegisterCreatedObjectUndo(npc, "Menu Stroller");
 
-        var mesh = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-        mesh.name = "Mesh";
-        var meshCol = mesh.GetComponent<Collider>();
-        if (meshCol != null) Object.DestroyImmediate(meshCol);
-        mesh.transform.SetParent(npc.transform, false);
-        mesh.transform.localPosition = new Vector3(0f, 1f, 0f);
-        mesh.transform.localScale = new Vector3(0.5f, 0.6f, 0.5f);
+        // Real WalkingBaby.fbx (rigged + animated) as the stroller's visual, so the menu
+        // shows the actual child walking rather than a capsule placeholder.
+        var mesh = BuildBabyMesh(npc.transform);
 
         var agent = npc.AddComponent<NavMeshAgent>();
         agent.baseOffset = 0f;
@@ -261,8 +262,107 @@ public static class MenuTourBuilder
         roamer.onlyDuringMenu = true;
         roamer.hideDuringGameplay = true;
         roamer.proceduralBobFallback = true;
+        roamer.animator = mesh != null ? mesh.GetComponentInChildren<Animator>(true) : null; // real walk clip, not the bob
 
         EditorUtility.SetDirty(roamer);
         return npc;
+    }
+
+    // ── Real-baby mesh + in-place stroller upgrade ───────────────────────────
+    /// <summary>
+    /// Upgrades the menu strollers already in the OPEN scene: swaps each one's capsule
+    /// "Mesh" placeholder for the real WalkingBaby.fbx (animated via BabyController) and
+    /// wires MenuRoamingNPC.animator so the roamer plays the real walk clip. Idempotent —
+    /// safe to re-run. Does NOT rebuild the camera / waypoints / showcase (unlike a full
+    /// Build Menu Tour), so VR tweaks such as worldSpace are preserved. Save the scene after.
+    /// </summary>
+    [MenuItem("Tools/STOP IT/Upgrade Menu Strollers to Real Baby")]
+    public static void UpgradeMenuStrollers()
+    {
+        var roamers = Object.FindObjectsByType<MenuRoamingNPC>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        if (roamers.Length == 0)
+        {
+            Debug.LogWarning("[STOP IT] No MenuRoamingNPC in the scene — run Tools/STOP IT/Build Menu Tour first.");
+            return;
+        }
+
+        int upgraded = 0;
+        foreach (var roamer in roamers)
+        {
+            var npc = roamer.gameObject;
+
+            // Drop the previous visual child (capsule "Mesh" or an earlier "MeshHolder").
+            var oldMesh = npc.transform.Find("Mesh");
+            if (oldMesh != null) Undo.DestroyObjectImmediate(oldMesh.gameObject);
+            var oldHolder = npc.transform.Find("MeshHolder");
+            if (oldHolder != null) Undo.DestroyObjectImmediate(oldHolder.gameObject);
+
+            var mesh = BuildBabyMesh(npc.transform);
+            Undo.RegisterCreatedObjectUndo(mesh, "Upgrade Menu Stroller");
+
+            roamer.animator = mesh.GetComponentInChildren<Animator>(true); // real walk clip, not the procedural bob
+            EditorUtility.SetDirty(roamer);
+            upgraded++;
+        }
+
+        EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+        Debug.Log($"[STOP IT] Upgraded {upgraded} menu stroller(s) to the real WalkingBaby + BabyController. Save the scene (Ctrl+S).");
+    }
+
+    /// <summary>
+    /// Builds a stroller's visual: the real WalkingBaby.fbx instance (Animator + BabyController),
+    /// sized to the 0.80 m the gameplay child uses with feet at the parent origin, parented under
+    /// <paramref name="parent"/>. Falls back to a capsule placeholder only if the model is missing.
+    /// </summary>
+    private static GameObject BuildBabyMesh(Transform parent)
+    {
+        var babyPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(WalkingBabyPath);
+        if (babyPrefab != null)
+        {
+            var mesh = (GameObject)PrefabUtility.InstantiatePrefab(babyPrefab);
+            mesh.name = "MeshHolder";
+            mesh.transform.SetParent(parent, false);
+            mesh.transform.localPosition = Vector3.zero;
+            mesh.transform.localRotation = Quaternion.identity;
+            FitHeightFeetAtOrigin(mesh, 0.80f);
+
+            var anim = mesh.GetComponent<Animator>();
+            if (anim == null) anim = mesh.AddComponent<Animator>();
+            var ctrl = AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>(BabyControllerPath);
+            if (ctrl != null) anim.runtimeAnimatorController = ctrl;
+            anim.applyRootMotion = false; // the NavMeshAgent drives position; the clip only animates the body
+            return mesh;
+        }
+
+        Debug.LogWarning("[STOP IT] WalkingBaby.fbx not found at " + WalkingBabyPath +
+                         " — menu stroller falls back to a capsule placeholder.");
+        var caps = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+        caps.name = "Mesh";
+        var col = caps.GetComponent<Collider>();
+        if (col != null) Object.DestroyImmediate(col);
+        caps.transform.SetParent(parent, false);
+        caps.transform.localPosition = new Vector3(0f, 1f, 0f);
+        caps.transform.localScale = new Vector3(0.5f, 0.6f, 0.5f);
+        return caps;
+    }
+
+    /// <summary>Uniformly scales <paramref name="go"/> so its renderer bounds are
+    /// <paramref name="targetHeight"/> tall, then lifts it so its feet rest at the parent's
+    /// origin height.</summary>
+    private static void FitHeightFeetAtOrigin(GameObject go, float targetHeight)
+    {
+        var rends = go.GetComponentsInChildren<Renderer>();
+        if (rends.Length == 0) return;
+        Bounds b = rends[0].bounds;
+        for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
+        if (b.size.y > 1e-4f) go.transform.localScale *= targetHeight / b.size.y;
+
+        rends = go.GetComponentsInChildren<Renderer>();
+        b = rends[0].bounds;
+        for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
+        float parentY = go.transform.parent != null ? go.transform.parent.position.y : 0f;
+        var lp = go.transform.localPosition;
+        lp.y += parentY - b.min.y;
+        go.transform.localPosition = lp;
     }
 }
