@@ -339,11 +339,20 @@ public class ChildNPC : MonoBehaviour
     private void Start()
     {
         TrySubscribeToGameManager(); // fallback in case GameManager wasn't ready at OnEnable
-        if (targetHazard != null)
+
+        // GameManager.State defaults to Menu at field-init time (before any Awake/Start runs),
+        // so this read is race-free regardless of component execution order.
+        bool playing = GameManager.Instance == null || GameManager.Instance.State == GameManager.GameState.Playing;
+
+        if (targetHazard != null && playing)
         {
             _lastTargetPos = targetHazard.transform.position;
             _walkCoroutine = StartCoroutine(BeginWalkAfterDelay());
         }
+
+        // Boot in Menu (normal case): stay hidden so only the two MenuRoamingNPC strollers
+        // are visible during the menu tour — OnGameStateChanged(Playing) reveals us later.
+        if (!playing) SetVisible(false);
     }
 
     private void Update()
@@ -1065,6 +1074,16 @@ public class ChildNPC : MonoBehaviour
         if (_agent != null && !_agent.enabled) _agent.enabled = true;
     }
 
+    /// <summary>Shows/hides the whole toddler (all body renderers). Used to keep the real
+    /// gameplay child out of sight during the Menu tour, where only the two MenuRoamingNPC
+    /// strollers should be visible.</summary>
+    private void SetVisible(bool on)
+    {
+        if (_bodyRenderers == null) _bodyRenderers = GetComponentsInChildren<Renderer>(true);
+        foreach (var r in _bodyRenderers)
+            if (r != null) r.enabled = on;
+    }
+
     /// <summary>Tints the whole toddler green (poisoned) or clears it. Uses a MaterialPropertyBlock so
     /// it creates no material instances and is trivially reversible on restart.</summary>
     public void SetPoisonTint(bool on)
@@ -1387,9 +1406,16 @@ public class ChildNPC : MonoBehaviour
             _isMoving = false;
             _isStopped = true;
             if (_agent != null && _agent.isOnNavMesh) _agent.isStopped = true;
+
+            // Hide only on the full return to Menu (menu tour shows just the two roaming
+            // strollers). Stay visible frozen for Success/Fail so the retry screen still
+            // shows the child where the round ended — unchanged existing behaviour.
+            if (state == GameManager.GameState.Menu) SetVisible(false);
         }
         else
         {
+            SetVisible(true);
+
             // Reset for new scenario. We wait one frame before starting the walk
             // so that ScenarioManager (running earlier in the frame, but whose
             // listener registration order is undefined) has had time to update
