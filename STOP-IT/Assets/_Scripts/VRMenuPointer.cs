@@ -159,12 +159,21 @@ public class VRMenuPointer : MonoBehaviour
 
         if (rOk || lOk)
         {
-            // Pick the hand pointing more directly at the menu canvas.
+            Vector3 menuPos = menuCanvas.transform.position;
+
+            // Auto-correct direction: if the ray points AWAY from the menu hemisphere, flip it.
+            // This handles two common Quest 3 / OpenXR edge-cases:
+            //   • pointerRotation returns grip rotation whose +Z is toward the elbow (backward)
+            //   • pointerRotation binding raises an exception → we fell back to gripAnchor.forward
+            //     which can also point backward on some runtimes
+            if (rOk && Vector3.Dot(rD, menuPos - rO) < 0f) rD = -rD;
+            if (lOk && Vector3.Dot(lD, menuPos - lO) < 0f) lD = -lD;
+
+            // Pick the hand whose corrected direction points most squarely at the menu.
             if (rOk && lOk)
             {
-                Vector3 c = menuCanvas.transform.position;
-                float rAlign = Vector3.Dot(rD, (c - rO).normalized);
-                float lAlign = Vector3.Dot(lD, (c - lO).normalized);
+                float rAlign = Vector3.Dot(rD, (menuPos - rO).normalized);
+                float lAlign = Vector3.Dot(lD, (menuPos - lO).normalized);
                 if (rAlign >= lAlign) { lineStart = rLS; rayOrigin = rO; dir = rD; }
                 else                  { lineStart = lLS; rayOrigin = lO; dir = lD; }
             }
@@ -173,7 +182,7 @@ public class VRMenuPointer : MonoBehaviour
             return;
         }
 
-        // Gaze fallback (camera forward).
+        // Gaze fallback (camera forward) — used when no controller data is available at all.
         lineStart = rayOrigin = gazeRayFallback != null ? gazeRayFallback.position : Vector3.zero;
         dir = gazeRayFallback != null ? gazeRayFallback.forward : Vector3.forward;
     }
@@ -186,17 +195,34 @@ public class VRMenuPointer : MonoBehaviour
         dir = Vector3.forward;
         if (posAction == null || rotAction == null) return false;
 
-        Vector3    pos = posAction.ReadValue<Vector3>();
-        Quaternion rot = rotAction.ReadValue<Quaternion>();
+        // Try OpenXR AIM pose first (pointerPosition / pointerRotation).
+        // Use try-catch: on some platforms the binding resolves to a Pose compound control
+        // rather than a standalone Vector3/Quaternion, causing ReadValue to throw.
+        Vector3    pos = Vector3.zero;
+        Quaternion rot = Quaternion.identity;
+        bool aimValid = false;
+        try
+        {
+            pos = posAction.ReadValue<Vector3>();
+            rot = rotAction.ReadValue<Quaternion>();
+            aimValid = pos.sqrMagnitude >= 0.01f; // zero = no device data
+        }
+        catch { /* binding type mismatch — will fall through to grip transform */ }
 
-        // A near-zero position means the binding has no live device data.
-        if (pos.sqrMagnitude < 0.01f) return false;
+        if (aimValid)
+        {
+            origin    = pos;
+            dir       = rot * Vector3.forward; // may still point backward — auto-flipped in GetActiveRay
+            lineStart = gripAnchor != null ? gripAnchor.position : pos;
+            return true;
+        }
 
-        // Aim pose: the position and direction that match "pointing at a screen" on Quest 3.
-        origin    = pos;
-        dir       = rot * Vector3.forward;
-        // Visual line starts at the physical controller grip (looks better than the offset aim pos).
-        lineStart = gripAnchor != null ? gripAnchor.position : pos;
+        // AIM pose not available → use the grip transform directly.
+        // Direction may be backward (+Z toward elbow on Quest 3); GetActiveRay auto-flips it.
+        if (gripAnchor == null) return false;
+        origin    = gripAnchor.position;
+        lineStart = gripAnchor.position;
+        dir       = gripAnchor.forward;
         return true;
     }
 
