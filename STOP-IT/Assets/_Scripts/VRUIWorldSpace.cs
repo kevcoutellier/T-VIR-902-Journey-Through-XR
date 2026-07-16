@@ -34,7 +34,7 @@ public class VRUIWorldSpace : MonoBehaviour
     private Transform _rightController;
     private Transform _leftController;
     private Canvas _menuCanvas;
-    private VRMenuPointer _pointer;
+    private readonly List<VRMenuPointer> _pointers = new(); // one per available controller (or one gaze pointer)
     private readonly List<Camera> _disabledCams = new();
 
     private static bool _spawned;
@@ -109,14 +109,17 @@ public class VRUIWorldSpace : MonoBehaviour
         {
             _menuCanvas = GetCanvas(menu);
             ConvertWorldSpace(_menuCanvas, menuWidth);
-            _pointer = gameObject.AddComponent<VRMenuPointer>();
-            // Controller-laser selection (right hand primary, left fallback). The controller anchor's
-            // forward is already the OpenXR aim/pointer pose, so no manual tilt is needed. When no
-            // controller resolves (desktop / edge cases) we fall back to the camera so gaze still works.
-            _pointer.rayOrigin = _rightController ?? _leftController ?? _cam.transform;
-            _pointer.rayAngleDownDeg = 0f;
-            _pointer.menuCanvas = _menuCanvas;
-            _pointer.RefreshButtons();
+            // One laser per available controller so EITHER hand can aim and pull its own trigger.
+            // The controller anchor's forward is already the OpenXR aim/pointer pose (no manual tilt).
+            // Each pointer lives on its OWN child GameObject: VRMenuPointer builds its LineRenderer on
+            // its gameObject, so two on one object would collide. When NO controller resolves
+            // (desktop / edge cases) we fall back to a single camera pointer so gaze still works.
+            if (_rightController != null)
+                CreatePointer("Menu Pointer R", _rightController, VRMenuPointer.ClickHand.Right);
+            if (_leftController != null)
+                CreatePointer("Menu Pointer L", _leftController, VRMenuPointer.ClickHand.Left);
+            if (_pointers.Count == 0)
+                CreatePointer("Menu Pointer (Gaze)", _cam.transform, VRMenuPointer.ClickHand.Any);
         }
 
         if (GameManager.Instance != null)
@@ -169,7 +172,21 @@ public class VRUIWorldSpace : MonoBehaviour
         pos.y = _cam.transform.position.y;
         _menuCanvas.transform.position = pos;
         _menuCanvas.transform.rotation = Quaternion.LookRotation(fwd, Vector3.up);
-        if (_pointer != null) _pointer.RefreshButtons();
+        foreach (var p in _pointers) if (p != null) p.RefreshButtons();
+    }
+
+    /// <summary>Spawn a laser pointer on its own child object, aimed from <paramref name="origin"/> and clicked by <paramref name="hand"/>.</summary>
+    private void CreatePointer(string name, Transform origin, VRMenuPointer.ClickHand hand)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(transform, false);
+        var pointer = go.AddComponent<VRMenuPointer>();
+        pointer.rayOrigin = origin;
+        pointer.clickHand = hand;
+        pointer.rayAngleDownDeg = 0f;
+        pointer.menuCanvas = _menuCanvas;
+        pointer.RefreshButtons();
+        _pointers.Add(pointer);
     }
 
     // ── conversion helpers ────────────────────────────────────────────────────

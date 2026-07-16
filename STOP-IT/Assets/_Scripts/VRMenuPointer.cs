@@ -17,7 +17,11 @@ using UnityEngine.UI;
 [DefaultExecutionOrder(1000)]
 public class VRMenuPointer : MonoBehaviour
 {
-    public Transform rayOrigin;     // right controller (falls back to left / camera)
+    /// <summary>Which hand's trigger clicks this pointer. Any = either trigger (gaze / desktop fallback).</summary>
+    public enum ClickHand { Any, Left, Right }
+
+    public Transform rayOrigin;     // this pointer's hand (falls back to camera for gaze)
+    public ClickHand clickHand = ClickHand.Any; // only react to this hand's trigger, so two pointers never double-click
     public Canvas menuCanvas;
     public float maxDistance = 6f;
     [Tooltip("Tilt the laser down from the controller's forward, to match how a controller is naturally held.")]
@@ -127,7 +131,15 @@ public class VRMenuPointer : MonoBehaviour
             }
         }
 
-        if (VRInput.AnyTriggerDown())
+        // Only fire on THIS pointer's own hand, so with two pointers alive a single trigger
+        // press invokes exactly one click (Any = either hand, for gaze / desktop fallback).
+        bool triggerDown = clickHand switch
+        {
+            ClickHand.Left  => VRInput.LeftTriggerDown(),
+            ClickHand.Right => VRInput.RightTriggerDown(),
+            _               => VRInput.AnyTriggerDown(),
+        };
+        if (triggerDown)
         {
             if (hit != null) hit.onClick.Invoke();
             else FindAnyObjectByType<StoryModeDirector>()?.StartStoryMode();
