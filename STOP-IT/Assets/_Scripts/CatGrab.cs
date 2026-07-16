@@ -82,8 +82,8 @@ public class CatGrab : MonoBehaviour, IProximityInteractable
 
     private void Start()
     {
-        _prompt = ProximityPrompt.Build("CatGrab_Prompt", InputHints.ResolvePrompt(promptText));
-        _dropPrompt = ProximityPrompt.Build("CatDrop_Prompt", InputHints.ResolvePrompt(dropPromptText));
+        _prompt = ProximityPrompt.Build("CatGrab_Prompt", InputHints.ResolveVerbPrompt(promptText));
+        _dropPrompt = ProximityPrompt.Build("CatDrop_Prompt", InputHints.ResolveVerbPrompt(dropPromptText));
         _armed = forceArmed;
 
         // The cat's "home" is its bed (where the tool seated it). Dropping / restarting returns it here.

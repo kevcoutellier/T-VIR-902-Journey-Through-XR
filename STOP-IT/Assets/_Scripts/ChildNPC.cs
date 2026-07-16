@@ -482,7 +482,7 @@ public class ChildNPC : MonoBehaviour
 
         _originalParent = transform.parent;
         transform.SetParent(attachPoint, worldPositionStays: false);
-        transform.localPosition = new Vector3(0f, -0.4f, 0.15f); // dangle slightly below the hand
+        transform.localPosition = new Vector3(0f, -0.12f, 0.22f); // held in front of the hand, not buried in it
         transform.localRotation = Quaternion.identity;
 
         // Gentle left-right sway while held (slow, low amplitude). Replaces the

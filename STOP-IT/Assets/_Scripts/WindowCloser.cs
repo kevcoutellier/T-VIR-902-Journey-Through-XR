@@ -79,7 +79,7 @@ public class WindowCloser : MonoBehaviour, IProximityInteractable
 
     private void Start()
     {
-        _prompt = ProximityPrompt.Build("WindowCloser_Prompt", InputHints.ResolvePrompt(promptText));
+        _prompt = ProximityPrompt.Build("WindowCloser_Prompt", InputHints.ResolveVerbPrompt(promptText));
         _armed = forceArmed;
 
         if (targetHazard == null && !string.IsNullOrEmpty(targetHazardName))

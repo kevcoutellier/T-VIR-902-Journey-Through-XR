@@ -55,6 +55,13 @@ public class MenuCameraTour : MonoBehaviour
     [Tooltip("Seconds before the camera switches to the other NPC.")]
     public float followSwitchInterval = 10f;
 
+    [Header("Follow wall collision")]
+    [Tooltip("Prevent the follow camera from passing through walls/ceilings.")]
+    public bool followWallCollision = true;
+    public LayerMask followCollisionMask = ~0;
+    [Min(0.05f)] public float followCollisionRadius = 0.15f;
+    [Min(0.05f)] public float followCollisionSkin   = 0.05f;
+
     [Tooltip("Fader used by TeleportFade. Auto-found if left null.")]
     public MenuFader fader;
 
@@ -271,6 +278,7 @@ public class MenuCameraTour : MonoBehaviour
         fwd.Normalize();
 
         Vector3 desired = tgt.position - fwd * followBackDistance + Vector3.up * followHeight;
+        ClampInsideWalls(tgt, ref desired);
         tourTarget.position = Vector3.SmoothDamp(tourTarget.position, desired, ref _followVel, followSmoothTime);
 
         Vector3 lookDir = (tgt.position + Vector3.up * followLookHeight) - tourTarget.position;
@@ -281,6 +289,18 @@ public class MenuCameraTour : MonoBehaviour
         // Keep the showcase in sync with whichever scenario room the NPC is in.
         int near = NearestStop(tgt.position);
         if (near >= 0 && near != _fromIndex) { _fromIndex = near; Arrive(near); }
+    }
+
+    private void ClampInsideWalls(Transform npc, ref Vector3 desired)
+    {
+        if (!followWallCollision) return;
+        Vector3 from = npc.position + Vector3.up * followLookHeight;
+        Vector3 dir  = desired - from;
+        float dist   = dir.magnitude;
+        if (dist < 0.01f) return;
+        if (Physics.SphereCast(from, followCollisionRadius, dir.normalized, out RaycastHit hit,
+                dist - followCollisionSkin, followCollisionMask, QueryTriggerInteraction.Ignore))
+            desired = hit.point - dir.normalized * followCollisionSkin;
     }
 
     private int NearestStop(Vector3 pos)

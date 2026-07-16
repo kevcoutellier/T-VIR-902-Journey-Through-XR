@@ -102,8 +102,8 @@ public class WaterBottle : MonoBehaviour
             _hazardRenderers = targetHazardZone.GetComponentsInChildren<Renderer>(includeInactive: true);
         // Substitute {KEY} for the active input label (shared with the cat / window
         // prompts via InputHints): "E" on desktop, "Presse les 4 gâchettes" in VR.
-        _pickupPrompt = BuildPrompt("WaterBottle_PickupPrompt", InputHints.ResolvePrompt(pickupPromptText));
-        _swapPrompt   = BuildPrompt("WaterBottle_SwapPrompt",   InputHints.ResolvePrompt(swapPromptText));
+        _pickupPrompt = BuildPrompt("WaterBottle_PickupPrompt", InputHints.ResolveVerbPrompt(pickupPromptText));
+        _swapPrompt   = BuildPrompt("WaterBottle_SwapPrompt",   InputHints.ResolveVerbPrompt(swapPromptText));
 
         // Self-reset on every Playing state transition. This is the fail-safe path
         // in case the ScenarioManager config isn't wired to call ResetBottle:

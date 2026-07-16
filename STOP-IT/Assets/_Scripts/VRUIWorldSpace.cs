@@ -210,12 +210,20 @@ public class VRUIWorldSpace : MonoBehaviour
 
     private static void AddControllerVisual(Transform ctrl)
     {
-        if (ctrl == null || ctrl.Find("VR Controller Visual") != null) return;
+        if (ctrl == null) return;
+
+        // If a scene-placed model (from editor tool "Wire Controller Models") is already here, keep it.
+        // Only fall back to the blue-cube placeholder when nothing exists.
+        if (ctrl.GetComponentInChildren<MeshRenderer>() != null) return;
+
+        // Blue-cube fallback so the controller is at least visible without the editor tool.
+        if (ctrl.Find("VR Controller Visual") != null) return;
         var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
         go.name = "VR Controller Visual";
         var col = go.GetComponent<Collider>(); if (col) Destroy(col);
         go.transform.SetParent(ctrl, false);
-        go.transform.localScale = new Vector3(0.04f, 0.04f, 0.06f); // small hand marker (not a beam)
+        go.transform.localPosition = new Vector3(0f, 0f, 0.03f);
+        go.transform.localScale = new Vector3(0.05f, 0.05f, 0.14f);
         var mr = go.GetComponent<MeshRenderer>();
         var sh = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Sprites/Default");
         if (sh != null)

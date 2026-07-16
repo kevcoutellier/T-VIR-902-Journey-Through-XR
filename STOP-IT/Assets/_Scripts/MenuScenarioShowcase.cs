@@ -307,7 +307,6 @@ public class MenuScenarioShowcase : MonoBehaviour
             gameObject.AddComponent<GraphicRaycaster>();
         BuildTitle(root);
         BuildLowerThird(root);
-        BuildScenarioList(root);
         BuildBottomBar(root);
 
         if (scenarioManager != null && scenarioManager.ScenarioCount > 0)
@@ -336,40 +335,19 @@ public class MenuScenarioShowcase : MonoBehaviour
 
         _title = MakeText(panel, "ScenarioTitle", "", 52, FontStyles.Bold, Color.white, TextAlignmentOptions.TopLeft);
         StretchTop(_title.rectTransform, 30, 58, 30, 70);
+        _title.enableAutoSizing = true; _title.fontSizeMax = 52; _title.fontSizeMin = 30;
 
         _objective = MakeText(panel, "Objective", "", 30, FontStyles.Normal,
                               new Color(0.85f, 0.88f, 0.94f), TextAlignmentOptions.TopLeft);
         _objective.enableWordWrapping = true;
         StretchTop(_objective.rectTransform, 30, 134, 30, 80);
+        _objective.enableAutoSizing = true; _objective.fontSizeMax = 30; _objective.fontSizeMin = 20;
 
         var pill = MakePanel(panel, "ActionPill", accentColor);
-        BottomLeft(pill, 30, 24, 380, 50);
+        BottomLeft(pill, 30, 24, 470, 54);
         _actionPill = MakeText(pill, "ActionText", "", 24, FontStyles.Bold, InkColor, TextAlignmentOptions.Center);
         Fill(_actionPill.rectTransform);
-    }
-
-    private void BuildScenarioList(RectTransform root)
-    {
-        if (scenarioManager == null) return;
-
-        var panel = MakePanel(root, "ScenarioListBg", panelColor);
-        TopRight(panel, 60, 120, 420, 470);
-
-        var header = MakeText(panel, "ListHeader", "SCÉNARIOS", 24, FontStyles.Normal,
-                              new Color(0.78f, 0.81f, 0.88f), TextAlignmentOptions.TopLeft);
-        StretchTop(header.rectTransform, 24, 18, 24, 34);
-
-        int count = scenarioManager.ScenarioCount;
-        float btnH = 64f, gap = 12f, top = 66f;
-        for (int i = 0; i < count; i++)
-        {
-            int scenario = i;
-            string label = (i + 1) + ".  " + scenarioManager.GetScenarioName(i);
-            var (rt, bg) = MakeListButton(panel, label, () => OnScenarioClicked(scenario));
-            StretchTop(rt, 24, top + i * (btnH + gap), 24, btnH);
-            _listButtonBgs.Add(bg);
-            _listScenarioIndex.Add(scenario);
-        }
+        _actionPill.enableAutoSizing = true; _actionPill.fontSizeMax = 24; _actionPill.fontSizeMin = 12;
     }
 
     private void BuildBottomBar(RectTransform root)
@@ -377,11 +355,8 @@ public class MenuScenarioShowcase : MonoBehaviour
         var story = MakeBigButton(root, "Commencer (Histoire)", accentColor, InkColor, OnPlayStory);
         BottomLeft((RectTransform)story.transform, 60, 90, 420, 76);
 
-        var single = MakeBigButton(root, "Jouer ce scénario", new Color(1f, 1f, 1f, 0.14f), Color.white, OnPlayCurrent);
-        BottomLeft((RectTransform)single.transform, 500, 90, 360, 76);
-
         var turn = MakeBigButton(root, ViewModeLabel(), new Color(0.18f, 0.45f, 0.85f, 0.95f), Color.white, OnToggleViewMode);
-        BottomLeft((RectTransform)turn.transform, 880, 90, 420, 76);
+        BottomLeft((RectTransform)turn.transform, 500, 90, 420, 76);
         _viewModeText = turn.GetComponentInChildren<TextMeshProUGUI>();
     }
 

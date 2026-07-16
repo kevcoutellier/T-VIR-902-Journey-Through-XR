@@ -47,4 +47,10 @@ public static class VRInput
         Ensure();
         return _left.IsPressed() || _right.IsPressed();
     }
+
+    /// <summary>True on the frame the LEFT index trigger is pressed (rising edge).</summary>
+    public static bool LeftTriggerDown()  { Ensure(); return _left.WasPressedThisFrame(); }
+
+    /// <summary>True on the frame the RIGHT index trigger is pressed (rising edge).</summary>
+    public static bool RightTriggerDown() { Ensure(); return _right.WasPressedThisFrame(); }
 }

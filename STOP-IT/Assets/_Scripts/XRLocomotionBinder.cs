@@ -79,6 +79,7 @@ public class XRLocomotionBinder : MonoBehaviour
     private InputAction _rightTriggerAction;
     private InputAction _rightGripAction;
     private bool _fourGrabActive;
+    private bool _verbActive;
     private ChildGrabber _activeGrabber;
     private ChildGrabber _leftGrabber;
     private ChildGrabber _rightGrabber;
@@ -323,16 +324,31 @@ public class XRLocomotionBinder : MonoBehaviour
     }
 
     /// <summary>
-    /// Polls the 4 triggers each frame. ALL held → grab (rising edge); ANY released
-    /// → drop (falling edge). The baby attaches to whichever hand is closest to it;
-    /// scenario verbs (cat / window / bottle) are camera-based so the chosen hand
-    /// doesn't matter for them.
+    /// Polls the 4 triggers each frame.
+    ///   • ONE hand (index trigger + grip) held → verb (cat / window / bottle) — TriggerVerbOnly.
+    ///   • ALL 4 held → baby grab — Trigger (full).
+    /// Both are rising-edge only; releasing clears the state.
     /// </summary>
     private void UpdateFourTriggerGrab()
     {
-        bool all = IsHeld(_leftTriggerAction)  && IsHeld(_leftGripAction)
-                && IsHeld(_rightTriggerAction) && IsHeld(_rightGripAction);
+        bool leftPair  = IsHeld(_leftTriggerAction)  && IsHeld(_leftGripAction);
+        bool rightPair = IsHeld(_rightTriggerAction) && IsHeld(_rightGripAction);
+        bool all       = leftPair && rightPair;
+        bool anyPair   = leftPair || rightPair;
 
+        // --- Verb (2 triggers one hand, NOT all 4) ---
+        if (anyPair && !all && !_verbActive)
+        {
+            _verbActive = true;
+            var g = leftPair ? _leftGrabber : _rightGrabber;
+            g?.TriggerVerbOnly();
+        }
+        else if (!anyPair)
+        {
+            _verbActive = false;
+        }
+
+        // --- Baby grab (all 4 triggers) ---
         if (all && !_fourGrabActive)
         {
             _fourGrabActive = true;
@@ -343,7 +359,6 @@ public class XRLocomotionBinder : MonoBehaviour
         else if (!all && _fourGrabActive)
         {
             _fourGrabActive = false;
-            // Release whichever hand might be holding the baby (idempotent if none).
             _leftGrabber?.Release();
             _rightGrabber?.Release();
             _activeGrabber = null;

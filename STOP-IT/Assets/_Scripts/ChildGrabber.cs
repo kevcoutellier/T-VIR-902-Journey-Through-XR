@@ -47,22 +47,13 @@ public class ChildGrabber : MonoBehaviour
 #pragma warning restore CS0618
     }
 
-    /// <summary>
-    /// Called by XRLocomotionBinder (VR: the 4 triggers held together) or
-    /// DesktopTestRig (E key).
-    /// Priority:
-    ///   1. If a WaterBottle is held → try to drop it on its hazard zone (camera distance).
-    ///   2. Else if a WaterBottle is near the player camera → pick it up.
-    ///   3. Else if a scenario interactable (cat, window, …) consumes the press → done.
-    ///   4. Else pick up the nearest ChildNPC via hand overlap-sphere (one-shot win) —
-    ///      unless that scenario disabled the direct save, in which case Grab() refuses
-    ///      and nothing happens (player must use the scenario verb instead).
-    ///
-    /// WaterBottle / interactable paths use the CAMERA position (not the hand) because
-    /// the desktop rig spawns a temporary "hand" GameObject 1.6m in front of the camera,
-    /// which would never sit close enough to a 0.9m-high bottle for an overlap-sphere hit.
-    /// </summary>
-    public void Trigger()
+    /// <summary>Full trigger: bottles + interactables + baby grab (VR: 4 triggers / desktop: E).</summary>
+    public void Trigger() => DoTrigger(allowBabyGrab: true);
+
+    /// <summary>Verb-only trigger: bottles + interactables, but NOT baby grab (VR: 2 triggers one hand).</summary>
+    public void TriggerVerbOnly() => DoTrigger(allowBabyGrab: false);
+
+    private void DoTrigger(bool allowBabyGrab)
     {
         if (_heldChild != null) return;
 
@@ -101,9 +92,6 @@ public class ChildGrabber : MonoBehaviour
         }
 
         // --- Scenario interactables (cat, window, …) via the proximity registry ---
-        // Same input as the baby grab; each interactable decides whether the player
-        // is close enough. First one to consume the press wins (and stops us from
-        // also trying to grab the baby).
         if (cam != null)
         {
             Vector3 camPos = cam.transform.position;
@@ -119,7 +107,10 @@ public class ChildGrabber : MonoBehaviour
             }
         }
 
-        // --- ChildNPC path: hand overlap-sphere (unchanged) ---
+        // --- ChildNPC path: hand overlap-sphere ---
+        // Skipped for verb-only triggers (2 gâchettes d'une main).
+        if (!allowBabyGrab) return;
+
         int hitCount = Physics.OverlapSphereNonAlloc(transform.position, grabRadius, _overlapBuffer,
             ~0, QueryTriggerInteraction.Collide);
 
@@ -138,9 +129,6 @@ public class ChildGrabber : MonoBehaviour
 
         if (closest == null) return;
 
-        // Only latch onto the child if the grab actually took. Grab() refuses when
-        // the current scenario disables the direct save (cat / window) — without this
-        // check the grabber would think it holds a child it isn't, and stay stuck.
         if (closest.Grab(transform))
         {
             _heldChild = closest;

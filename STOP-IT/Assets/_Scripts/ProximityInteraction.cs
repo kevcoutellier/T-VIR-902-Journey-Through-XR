@@ -65,18 +65,27 @@ public static class InputHints
     }
 
     /// <summary>
-    /// The label to drop into a "{KEY} pour …" prompt. Desktop = "E"; VR = the
-    /// 4-trigger grab gesture (both index triggers + both grips held together).
+    /// Label for the BABY GRAB input (4 triggers in VR, E on desktop).
+    /// Used by grab prompts ("attrape le bébé").
     /// </summary>
     public static string ActionKeyLabel => IsVRActive() ? "Presse les 4 gâchettes" : "E";
 
-    /// <summary>Substitute {KEY} (or a legacy leading "E ") for the active input label.</summary>
-    public static string ResolvePrompt(string raw)
+    /// <summary>
+    /// Label for SCENARIO VERBS (2 triggers one hand in VR, E on desktop).
+    /// Used by cat / bottle / window prompts.
+    /// </summary>
+    public static string VerbKeyLabel => IsVRActive() ? "Presse les 2 gâchettes d'une main" : "E";
+
+    /// <summary>Substitute {KEY} with the baby-grab label.</summary>
+    public static string ResolvePrompt(string raw) => ResolveWith(raw, ActionKeyLabel);
+
+    /// <summary>Substitute {KEY} with the scenario-verb label (2 triggers one hand).</summary>
+    public static string ResolveVerbPrompt(string raw) => ResolveWith(raw, VerbKeyLabel);
+
+    private static string ResolveWith(string raw, string key)
     {
         if (string.IsNullOrEmpty(raw)) return raw;
-        string key = ActionKeyLabel;
         if (raw.Contains("{KEY}")) return raw.Replace("{KEY}", key);
-        // Backwards compatibility with assets saved before the placeholder existed.
         if (key != "E" && raw.StartsWith("E ")) return key + raw.Substring(1);
         return raw;
     }
