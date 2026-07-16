@@ -60,10 +60,14 @@ public static class VRControllerModelSetup
         var existing = ctrl.Find(prefab.name);
         if (existing != null) Object.DestroyImmediate(existing.gameObject);
 
-        // Instantiate and parent.
+        // Instantiate and parent. IMPORTANT: keep the prefab's AUTHORED local transform.
+        // The XRI Quest visual prefabs are intentionally rotated 180° about Y (both hands) and the
+        // RIGHT hand is additionally X-mirrored (localScale.x = -1) so the shared mesh becomes a right
+        // hand facing the correct way on the aim-pose anchor. Forcing identity rotation / unit scale
+        // (as this did before) flipped both models 180° and un-mirrored the right hand — i.e. the
+        // "manettes à l'envers" bug. PrefabUtility.InstantiatePrefab already reproduces that authored
+        // local transform, so we DO NOT overwrite it here.
         var instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab, ctrl);
-        instance.transform.SetLocalPositionAndRotation(Vector3.zero, Quaternion.identity);
-        instance.transform.localScale = Vector3.one;
         EditorUtility.SetDirty(ctrl.gameObject);
         Debug.Log($"[STOP IT] Wired '{prefab.name}' under '{ctrl.name}'.");
         return 1;
