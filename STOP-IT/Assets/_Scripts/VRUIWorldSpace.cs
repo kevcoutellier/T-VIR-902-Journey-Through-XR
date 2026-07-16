@@ -32,7 +32,6 @@ public class VRUIWorldSpace : MonoBehaviour
 
     private Camera _cam;
     private Transform _rightController;
-    private Transform _leftController;
     private Canvas _menuCanvas;
     private VRMenuPointer _pointer;
     private readonly List<Camera> _disabledCams = new();
@@ -88,9 +87,8 @@ public class VRUIWorldSpace : MonoBehaviour
         if (!_cam.gameObject.activeSelf) _cam.gameObject.SetActive(true);
         _cam.enabled = true;
 
-        _leftController  = ResolveController(xr, "Left Controller");
         _rightController = ResolveController(xr, "Right Controller")
-                        ?? _leftController
+                        ?? ResolveController(xr, "Left Controller")
                         ?? _cam.transform;
 
         // Visible hands so the player can see + aim the Quest controllers.
@@ -112,11 +110,10 @@ public class VRUIWorldSpace : MonoBehaviour
             _menuCanvas = GetCanvas(menu);
             ConvertWorldSpace(_menuCanvas, menuWidth);
             _pointer = gameObject.AddComponent<VRMenuPointer>();
-            // Controller laser via OpenXR AIM pose (pointer space) — correct pointing direction
-            // on Quest 3. Gaze (camera) kept as fallback when no controller data is available.
-            _pointer.gazeRayFallback        = _cam.transform;
-            _pointer.rightControllerForLine = _rightController != _cam.transform ? _rightController : null;
-            _pointer.leftControllerForLine  = _leftController;
+            // Gaze selection (look at a button + trigger). The controller laser kept missing the menu
+            // and rendered as a big beam along its axis; gaze is the version that worked. Hands are
+            // still shown via the small controller markers below.
+            _pointer.rayOrigin = _cam.transform;
             _pointer.menuCanvas = _menuCanvas;
             _pointer.RefreshButtons();
         }
