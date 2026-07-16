@@ -163,6 +163,11 @@ public class MenuRoamingNPC : MonoBehaviour
     {
         _cameraForceHidden = hidden;
         SetVisible(_roaming && !hidden);
+        // Freeze the hidden stroller on the NavMesh so it doesn't keep walking off-screen
+        // and appear to "teleport" across the house when the follow camera re-reveals it.
+        // Resume exactly where it was when shown again (if still roaming).
+        if (_agent != null && _agent.isActiveAndEnabled && _agent.isOnNavMesh)
+            _agent.isStopped = hidden || !_roaming;
     }
 
     private void SetVisible(bool on)
@@ -173,7 +178,7 @@ public class MenuRoamingNPC : MonoBehaviour
 
     private void Update()
     {
-        if (!_roaming || _agent == null || !_agent.isActiveAndEnabled || !_agent.isOnNavMesh)
+        if (!_roaming || _cameraForceHidden || _agent == null || !_agent.isActiveAndEnabled || !_agent.isOnNavMesh)
             return;
 
         switch (_state)
