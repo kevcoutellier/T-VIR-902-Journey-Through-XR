@@ -23,11 +23,15 @@ public class VRMenuPointer : MonoBehaviour
     [Tooltip("Tilt the laser down from the controller's forward, to match how a controller is naturally held.")]
     public float rayAngleDownDeg = 0f;
 
-    public Color lineIdle  = new Color(0.5f, 0.8f, 1f, 0.5f);
+    public Color lineIdle  = new Color(0.5f, 0.8f, 1f, 0.7f);
     public Color lineHover = new Color(0.35f, 0.95f, 0.45f, 0.95f);
     [Range(1f, 1.3f)] public float hoverScale = 1.15f;
+    [Tooltip("Diameter of the dot drawn where the laser meets the menu, metres.")]
+    public float dotSize = 0.02f;
 
     private LineRenderer _line;
+    private GameObject _dot;
+    private Material _dotMat;
     private Button[] _buttons;
     private Button _hovered;
     private Vector3 _hoveredScale;
@@ -44,6 +48,21 @@ public class VRMenuPointer : MonoBehaviour
         _line.textureMode = LineTextureMode.Stretch;
         SetLineColor(lineIdle);
         _line.enabled = false;
+
+        // Small dot at the hit point so the aim target reads clearly. Parented to this (identity-scale)
+        // adapter object so it is cleaned up with us; positioned in world space each frame.
+        _dot = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        _dot.name = "VR Pointer Dot";
+        var dotCol = _dot.GetComponent<Collider>(); if (dotCol) Destroy(dotCol);
+        _dot.transform.SetParent(transform, false);
+        _dot.transform.localScale = Vector3.one * dotSize;
+        var dotSh = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Sprites/Default");
+        if (dotSh != null)
+        {
+            _dotMat = new Material(dotSh);
+            _dot.GetComponent<MeshRenderer>().sharedMaterial = _dotMat;
+        }
+        _dot.SetActive(false);
     }
 
     /// <summary>Re-scan the menu for buttons (call after the menu (re)builds or repositions).</summary>
@@ -60,6 +79,7 @@ public class VRMenuPointer : MonoBehaviour
         {
             ClearHover();
             if (_line) _line.enabled = false;
+            if (_dot) _dot.SetActive(false);
             return;
         }
 
@@ -87,12 +107,24 @@ public class VRMenuPointer : MonoBehaviour
 
         SetHover(hit);
 
+        Color col = hit != null ? lineHover : lineIdle;
         if (_line)
         {
             _line.enabled = true;
             _line.SetPosition(0, origin);
             _line.SetPosition(1, endPoint);
-            SetLineColor(hit != null ? lineHover : lineIdle);
+            SetLineColor(col);
+        }
+        if (_dot)
+        {
+            _dot.SetActive(true);
+            _dot.transform.position = endPoint;
+            if (_dotMat != null)
+            {
+                Color dc = col; dc.a = 1f;
+                _dotMat.color = dc;
+                _dotMat.SetColor("_BaseColor", dc);
+            }
         }
 
         if (VRInput.AnyTriggerDown())
@@ -100,6 +132,11 @@ public class VRMenuPointer : MonoBehaviour
             if (hit != null) hit.onClick.Invoke();
             else FindAnyObjectByType<StoryModeDirector>()?.StartStoryMode();
         }
+    }
+
+    private void OnDestroy()
+    {
+        if (_dot != null) Destroy(_dot);
     }
 
     private Button ButtonAt(Vector3 worldPoint)

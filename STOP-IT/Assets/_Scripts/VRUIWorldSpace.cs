@@ -32,6 +32,7 @@ public class VRUIWorldSpace : MonoBehaviour
 
     private Camera _cam;
     private Transform _rightController;
+    private Transform _leftController;
     private Canvas _menuCanvas;
     private VRMenuPointer _pointer;
     private readonly List<Camera> _disabledCams = new();
@@ -87,13 +88,12 @@ public class VRUIWorldSpace : MonoBehaviour
         if (!_cam.gameObject.activeSelf) _cam.gameObject.SetActive(true);
         _cam.enabled = true;
 
-        _rightController = ResolveController(xr, "Right Controller")
-                        ?? ResolveController(xr, "Left Controller")
-                        ?? _cam.transform;
+        _rightController = ResolveController(xr, "Right Controller");
+        _leftController  = ResolveController(xr, "Left Controller");
 
         // Visible hands so the player can see + aim the Quest controllers.
-        AddControllerVisual(ResolveController(xr, "Left Controller"));
-        AddControllerVisual(ResolveController(xr, "Right Controller"));
+        AddControllerVisual(_leftController);
+        AddControllerVisual(_rightController);
 
         // HUD + end screens → head-locked.
         var hud = FindAnyObjectByType<ScenarioUI>(FindObjectsInactive.Include);
@@ -110,10 +110,11 @@ public class VRUIWorldSpace : MonoBehaviour
             _menuCanvas = GetCanvas(menu);
             ConvertWorldSpace(_menuCanvas, menuWidth);
             _pointer = gameObject.AddComponent<VRMenuPointer>();
-            // Gaze selection (look at a button + trigger). The controller laser kept missing the menu
-            // and rendered as a big beam along its axis; gaze is the version that worked. Hands are
-            // still shown via the small controller markers below.
-            _pointer.rayOrigin = _cam.transform;
+            // Controller-laser selection (right hand primary, left fallback). The controller anchor's
+            // forward is already the OpenXR aim/pointer pose, so no manual tilt is needed. When no
+            // controller resolves (desktop / edge cases) we fall back to the camera so gaze still works.
+            _pointer.rayOrigin = _rightController ?? _leftController ?? _cam.transform;
+            _pointer.rayAngleDownDeg = 0f;
             _pointer.menuCanvas = _menuCanvas;
             _pointer.RefreshButtons();
         }
@@ -212,6 +213,10 @@ public class VRUIWorldSpace : MonoBehaviour
     {
         if (ctrl == null) return;
 
+        // Safety-net: correct the wired model's local transform on-device before anything else, in case
+        // the saved scene still carries the old flipped override that rendered the controller upside-down.
+        FixWiredModelOrientation(ctrl);
+
         // If a scene-placed model (from editor tool "Wire Controller Models") is already here, keep it.
         // Only fall back to the blue-cube placeholder when nothing exists.
         if (ctrl.GetComponentInChildren<MeshRenderer>() != null) return;
@@ -232,6 +237,36 @@ public class VRUIWorldSpace : MonoBehaviour
             var m = new Material(sh); m.color = tint; m.SetColor("_BaseColor", tint);
             mr.sharedMaterial = m;
         }
+    }
+
+    /// <summary>
+    /// Runtime safety-net for the on-device controller MODEL orientation. When the real wired model
+    /// (the XRI prefab instance — a direct child whose name starts with "XR Controller") is present,
+    /// force its local transform back to the authored values. This corrects the upside-down rendering
+    /// that a stale scene override could otherwise reintroduce; it never touches the aim/anchor
+    /// transform (whose forward is the pointer pose the laser rides on).
+    ///   RIGHT hand: Euler(0,180,0), scale (-1,1,1) (X-mirror = right hand), pos (0,0,-0.05)
+    ///   LEFT  hand: Euler(0,180,0), scale ( 1,1,1),                         pos (0,0,-0.05)
+    /// </summary>
+    private static void FixWiredModelOrientation(Transform ctrl)
+    {
+        if (ctrl == null) return;
+
+        Transform model = null;
+        for (int i = 0; i < ctrl.childCount; i++)
+        {
+            var child = ctrl.GetChild(i);
+            if (child.name.StartsWith("XR Controller")) { model = child; break; }
+        }
+        if (model == null) return; // no wired model → blue-cube fallback handles visibility.
+
+        bool isRight = ctrl.name.Contains("Right");
+        bool isLeft  = ctrl.name.Contains("Left");
+        if (!isRight && !isLeft) return; // unknown hand → leave the authored transform untouched.
+
+        model.localRotation = Quaternion.Euler(0f, 180f, 0f);
+        model.localPosition = new Vector3(0f, 0f, -0.05f);
+        model.localScale    = isRight ? new Vector3(-1f, 1f, 1f) : Vector3.one;
     }
 
     private static Transform ResolveController(XROrigin xr, string controllerName)
