@@ -426,17 +426,62 @@ public class XRLocomotionBinder : MonoBehaviour
         _xrOrigin.transform.RotateAround(_cameraTransform.position, Vector3.up, x * smoothTurnSpeed * Time.deltaTime);
     }
 
+    // Locomotion casts must NEVER latch onto the walking toddler. The ground-follow ray hitting the
+    // child's ~0.8 m capsule snaps the rig's Y, and the wall cast treats the child as a wall and slides
+    // the rig — both read in-headset as "the baby teleporting" (it is actually the VIEWPOINT lurching,
+    // since the child's own transform is never player-coupled). These NonAlloc variants skip any hit
+    // that belongs to a ChildNPC so the player can walk right up to the toddler to grab it.
+    private static readonly RaycastHit[] _rayBuf = new RaycastHit[8];
+    private static readonly RaycastHit[] _capBuf = new RaycastHit[8];
+
+    private static bool IsNpc(Collider c) => c != null && c.GetComponentInParent<ChildNPC>() != null;
+
     private void UpdateGroundFollow()
     {
         // Keep the rig's Y on the floor directly under the head so the eye stays ~eyeHeight above
         // whatever floor the player is on, and small steps (e.g. the kitchen threshold) can be entered.
         Vector3 head = _cameraTransform.position;
-        if (Physics.Raycast(head + Vector3.up * 0.1f, Vector3.down, out RaycastHit hit, 4f, wallMask, QueryTriggerInteraction.Ignore))
+        int n = Physics.RaycastNonAlloc(head + Vector3.up * 0.1f, Vector3.down, _rayBuf, 4f, wallMask, QueryTriggerInteraction.Ignore);
+        float bestDist = float.PositiveInfinity;
+        float floorY = 0f;
+        bool found = false;
+        for (int i = 0; i < n; i++)
+        {
+            if (IsNpc(_rayBuf[i].collider)) continue;   // don't ground-follow onto the toddler's head
+            if (_rayBuf[i].distance < bestDist)
+            {
+                bestDist = _rayBuf[i].distance;
+                floorY   = _rayBuf[i].point.y;
+                found    = true;
+            }
+        }
+        if (found)
         {
             Vector3 op = _xrOrigin.transform.position;
-            op.y = Mathf.MoveTowards(op.y, hit.point.y, groundFollowSpeed * Time.deltaTime);
+            op.y = Mathf.MoveTowards(op.y, floorY, groundFollowSpeed * Time.deltaTime);
             _xrOrigin.transform.position = op;
         }
+    }
+
+    /// <summary>CapsuleCast that returns the nearest hit which is NOT a toddler/NPC (see <see cref="IsNpc"/>).</summary>
+    private bool CapsuleCastNonNpc(Vector3 bottom, Vector3 top, float radius, Vector3 dir, float dist, out RaycastHit best)
+    {
+        best = default;
+        if (dir.sqrMagnitude < 1e-8f) return false;
+        int n = Physics.CapsuleCastNonAlloc(bottom, top, radius, dir, _capBuf, dist, wallMask, QueryTriggerInteraction.Ignore);
+        float bestDist = float.PositiveInfinity;
+        bool found = false;
+        for (int i = 0; i < n; i++)
+        {
+            if (IsNpc(_capBuf[i].collider)) continue;   // walk right up to the toddler; it is not a wall
+            if (_capBuf[i].distance < bestDist)
+            {
+                bestDist = _capBuf[i].distance;
+                best     = _capBuf[i];
+                found    = true;
+            }
+        }
+        return found;
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -454,7 +499,7 @@ public class XRLocomotionBinder : MonoBehaviour
         Vector3 dir = desiredMove.normalized;
         float dist = desiredMove.magnitude;
 
-        if (Physics.CapsuleCast(bottom, top, playerRadius, dir, out RaycastHit hit, dist + 0.02f, wallMask, QueryTriggerInteraction.Ignore))
+        if (CapsuleCastNonNpc(bottom, top, playerRadius, dir, dist + 0.02f, out RaycastHit hit))
         {
             // Walkable slope (the stair ramp is ≈42°)? Don't treat it as a wall — allow the move and
             // let UpdateGroundFollow carry the player up/down it. Only near-vertical faces (real walls,
@@ -470,7 +515,7 @@ public class XRLocomotionBinder : MonoBehaviour
                 desiredMove += normal * into;
 
             // Re-check after sliding to avoid gliding into a corner.
-            if (Physics.CapsuleCast(bottom, top, playerRadius, desiredMove.normalized, out _, desiredMove.magnitude + 0.02f, wallMask, QueryTriggerInteraction.Ignore))
+            if (CapsuleCastNonNpc(bottom, top, playerRadius, desiredMove.normalized, desiredMove.magnitude + 0.02f, out _))
                 return Vector3.zero;
         }
         return desiredMove;
