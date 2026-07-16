@@ -71,6 +71,9 @@ public class MenuRoamingNPC : MonoBehaviour
     private bool  _subscribed;
     private Vector3 _startPos;
 
+    // Set by MenuCameraTour in Follow mode to hide all but the active NPC regardless of roam state.
+    private bool _cameraForceHidden = false;
+
     // Procedural bob (only used when no Animator).
     private Transform _meshT;
     private Vector3   _meshStartLocal;
@@ -152,9 +155,20 @@ public class MenuRoamingNPC : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Called by MenuCameraTour (Follow mode) to force this NPC hidden or visible
+    /// regardless of its roaming state. Takes priority over hideDuringGameplay.
+    /// </summary>
+    public void SetCameraForceHidden(bool hidden)
+    {
+        _cameraForceHidden = hidden;
+        SetVisible(_roaming && !hidden);
+    }
+
     private void SetVisible(bool on)
     {
-        foreach (var r in GetComponentsInChildren<Renderer>(true)) r.enabled = on;
+        bool show = on && !_cameraForceHidden;
+        foreach (var r in GetComponentsInChildren<Renderer>(true)) r.enabled = show;
     }
 
     private void Update()

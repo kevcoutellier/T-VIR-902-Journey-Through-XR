@@ -178,6 +178,9 @@ public class MenuCameraTour : MonoBehaviour
         if (!run)
         {
             if (fader != null) fader.SetAlphaImmediate(0f);
+            // Restore all follow-target NPCs when the tour stops (returning to gameplay).
+            if (comfortMode == ComfortMode.Follow)
+                for (int i = 0; i < followTargets.Count; i++) SetFollowNpcVisible(i, true);
             return;
         }
 
@@ -186,6 +189,12 @@ public class MenuCameraTour : MonoBehaviour
         _fromIndex       = 0;
         _jumpTarget      = -1;
         _autoPausedUntil = 0f;
+        _followIndex     = 0;
+        _followTimer     = 0f;
+
+        // In Follow mode, show only the first NPC so the camera starts with a clean cut.
+        if (comfortMode == ComfortMode.Follow)
+            for (int i = 0; i < followTargets.Count; i++) SetFollowNpcVisible(i, i == 0);
 
         if (snapToFirstOnStart) SetPose(0);
         if (fader != null) fader.SetAlphaImmediate(0f);
@@ -263,8 +272,10 @@ public class MenuCameraTour : MonoBehaviour
         _followTimer += Time.deltaTime;
         if (followTargets.Count > 1 && _followTimer >= followSwitchInterval)
         {
+            SetFollowNpcVisible(_followIndex, false); // hide old
             _followIndex = (_followIndex + 1) % followTargets.Count;
             _followTimer = 0f;
+            SetFollowNpcVisible(_followIndex, true);  // show new
         }
         if (_followIndex >= followTargets.Count) _followIndex = 0;
 
@@ -289,6 +300,19 @@ public class MenuCameraTour : MonoBehaviour
         // Keep the showcase in sync with whichever scenario room the NPC is in.
         int near = NearestStop(tgt.position);
         if (near >= 0 && near != _fromIndex) { _fromIndex = near; Arrive(near); }
+    }
+
+    /// <summary>
+    /// In Follow mode, only the active follow target is visible. Uses MenuRoamingNPC's
+    /// force-hidden flag so the NPC's own roaming-show logic can't override us.
+    /// Falls back to direct Renderer toggling for non-MenuRoamingNPC targets.
+    /// </summary>
+    private void SetFollowNpcVisible(int idx, bool on)
+    {
+        if (idx < 0 || idx >= followTargets.Count || followTargets[idx] == null) return;
+        var npc = followTargets[idx].GetComponent<MenuRoamingNPC>();
+        if (npc != null) npc.SetCameraForceHidden(!on);
+        else foreach (var r in followTargets[idx].GetComponentsInChildren<Renderer>(true)) r.enabled = on;
     }
 
     private void ClampInsideWalls(Transform npc, ref Vector3 desired)
