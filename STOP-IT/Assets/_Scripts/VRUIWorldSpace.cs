@@ -82,6 +82,13 @@ public class VRUIWorldSpace : MonoBehaviour
         foreach (var tour in FindObjectsByType<MenuCameraTour>(FindObjectsInactive.Include))
             tour.enabled = false;
 
+        // The VR menu is a SIMPLE static launch menu: the cinematic camera-tour AND the roaming
+        // "stroller" babies are a DESKTOP-only attract mode (a moving camera in VR is uncomfortable
+        // and was ruled out). Disable every menu stroller so no baby ever wanders the VR menu.
+        // (MenuRoamingNPC is independent from the gameplay ChildNPC, so this never touches gameplay.)
+        foreach (var roamer in FindObjectsByType<MenuRoamingNPC>(FindObjectsInactive.Include))
+            if (roamer != null) roamer.gameObject.SetActive(false);
+
         // CRITICAL: HousePreview leaves the HMD camera disabled during the menu (the desktop build
         // shows the cinematic MenuCamera instead). In VR the headset MUST render through the XR
         // camera, so force it on now — and LateUpdate keeps it on no matter what the menu does.
