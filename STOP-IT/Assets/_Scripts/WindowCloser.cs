@@ -152,7 +152,8 @@ public class WindowCloser : MonoBehaviour, IProximityInteractable
     }
 
     // ── IProximityInteractable ───────────────────────────────────────────────
-    public bool TryInteract(Vector3 cameraPosition)
+    // La fenêtre ne se porte pas : la main est ignorée.
+    public bool TryInteract(Vector3 cameraPosition, Transform hand)
     {
         if (!IsArmed || !_havePose) return false;
         if (Vector3.Distance(cameraPosition, _openingWorldPos) > interactionRadius) return false;

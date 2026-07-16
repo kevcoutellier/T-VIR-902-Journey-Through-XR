@@ -98,7 +98,10 @@ public class ChildGrabber : MonoBehaviour
             var interactables = ProximityInteractables.All;
             for (int i = 0; i < interactables.Count; i++)
             {
-                if (interactables[i] != null && interactables[i].TryInteract(camPos))
+                // Pass our own transform as the active hand — an interactable (e.g. the
+                // cat) can attach to it to ride in the player's hand, exactly like the
+                // WaterBottle.TryPickup(transform) call above.
+                if (interactables[i] != null && interactables[i].TryInteract(camPos, transform))
                 {
                     if (_controller != null)
                         _controller.SendHapticImpulse(hapticAmplitude, hapticDuration);

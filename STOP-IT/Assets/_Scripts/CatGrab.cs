@@ -30,6 +30,12 @@ public class CatGrab : MonoBehaviour, IProximityInteractable
     [Tooltip("Local offset of the prompt above the cat.")]
     public Vector3 promptOffset = new Vector3(0f, 0.35f, 0f);
 
+    [Header("Carry pose (cat in the player's hand)")]
+    [Tooltip("Local position offset from the hand/controller where the carried cat is cradled (just in front of and below the hand).")]
+    public Vector3 carryLocalOffset = new Vector3(0f, -0.15f, 0.35f);
+    [Tooltip("Local rotation (euler) applied to the carried cat relative to the hand.")]
+    public Vector3 carryLocalEuler = Vector3.zero;
+
     [Header("Success")]
     [Tooltip("Hazard to neutralise on success (auto = active scenario's hazard, e.g. the microwave).")]
     public HazardZone targetHazard;
@@ -52,6 +58,8 @@ public class CatGrab : MonoBehaviour, IProximityInteractable
     private bool _taken;
     private bool _carrying;
     private Renderer[] _renderers;
+    private Collider[] _colliders;
+    private Transform _carryHand;   // main/manette active qui porte le chat (null = suit la caméra)
     private GameObject _prompt;
     private GameObject _dropPrompt;
     private ChildNPC _child;
@@ -70,6 +78,7 @@ public class CatGrab : MonoBehaviour, IProximityInteractable
     private void Awake()
     {
         _renderers = GetComponentsInChildren<Renderer>(includeInactive: true);
+        _colliders = GetComponentsInChildren<Collider>(includeInactive: true);
     }
 
     private void OnEnable()  => ProximityInteractables.Register(this);
@@ -154,6 +163,17 @@ public class CatGrab : MonoBehaviour, IProximityInteractable
         if (cam == null) { if (_prompt) _prompt.SetActive(false); if (_dropPrompt) _dropPrompt.SetActive(false); return; }
         bool playing = GameManager.Instance != null && GameManager.Instance.State == GameManager.GameState.Playing;
 
+        // Porté : le chat suit la main/manette active chaque frame (pas de reparent —
+        // reste un objet racine libre, comme la WaterBottle). Si la main disparaît
+        // (desktop détruit la main de saisie au relâchement de E), on retombe
+        // proprement sur la caméra.
+        if (_carrying)
+        {
+            Transform anchor = (_carryHand != null) ? _carryHand : cam.transform;
+            transform.position = anchor.TransformPoint(carryLocalOffset);
+            transform.rotation = anchor.rotation * Quaternion.Euler(carryLocalEuler);
+        }
+
         // Carrying the cat → "drop it in the basket" prompt, gated by distance to the basket.
         if (_carrying && _dropPrompt != null && basket != null)
         {
@@ -174,7 +194,7 @@ public class CatGrab : MonoBehaviour, IProximityInteractable
     }
 
     // ── IProximityInteractable ───────────────────────────────────────────────
-    public bool TryInteract(Vector3 cameraPosition)
+    public bool TryInteract(Vector3 cameraPosition, Transform hand)
     {
         // While carrying, the press drops the cat in the basket (only if close enough).
         if (_carrying)
@@ -187,6 +207,7 @@ public class CatGrab : MonoBehaviour, IProximityInteractable
         // Otherwise the press snatches the cat from the toddler.
         if (!IsArmed) return false;
         if (Vector3.Distance(cameraPosition, transform.position) > interactionRadius) return false;
+        _carryHand = hand; // le chat viendra se loger dans cette main (suivi de pose dans Update)
         TakeCat();
         return true;
     }
@@ -202,7 +223,10 @@ public class CatGrab : MonoBehaviour, IProximityInteractable
         if (_child == null) _child = FindAnyObjectByType<ChildNPC>();
         if (_child != null) _child.ForgetCarriedItem();
 
-        SetVisible(false); // "in the player's arms"
+        // Le chat RESTE visible et vient se loger dans la main du joueur (suivi de
+        // pose dans Update). On coupe ses colliders pour qu'il ne pousse pas le
+        // joueur et n'accroche pas les murs pendant le transport.
+        SetCollidersEnabled(false);
         if (_prompt != null) _prompt.SetActive(false);
 
         // Neutralise the microwave so a same-frame arrival can't flash a fail,
@@ -231,6 +255,10 @@ public class CatGrab : MonoBehaviour, IProximityInteractable
 
     private void RestoreToHome()
     {
+        // Fin du transport : on relâche la main et on réactive les colliders (couvre
+        // DropInBasket, qui appelle RestoreToHome, ET le reset de scénario).
+        _carryHand = null;
+        SetCollidersEnabled(true);
         if (!_homeRecorded) return;
         transform.SetParent(_homeParent, false);
         transform.localPosition = _homeLocalPos;
@@ -243,6 +271,13 @@ public class CatGrab : MonoBehaviour, IProximityInteractable
         if (_renderers == null) return;
         for (int i = 0; i < _renderers.Length; i++)
             if (_renderers[i] != null) _renderers[i].enabled = on;
+    }
+
+    private void SetCollidersEnabled(bool on)
+    {
+        if (_colliders == null) return;
+        for (int i = 0; i < _colliders.Length; i++)
+            if (_colliders[i] != null) _colliders[i].enabled = on;
     }
 
 #if UNITY_EDITOR

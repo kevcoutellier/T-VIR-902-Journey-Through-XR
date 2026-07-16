@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
+using UnityEngine.Rendering;
 
 /// <summary>
 /// STOP IT! — Proximity interaction support (shared infrastructure).
@@ -21,8 +23,11 @@ public interface IProximityInteractable
     /// The player pressed the interact input. Return true if THIS object handled
     /// it (player was close enough and the action fired) — that stops the grabber
     /// from also trying to grab the baby.
+    /// <paramref name="hand"/> is the active hand/controller transform that fired
+    /// the press (the ChildGrabber's own transform) — an object can attach itself
+    /// to it to ride in the player's hand. May be ignored by verbs that don't carry.
     /// </summary>
-    bool TryInteract(Vector3 cameraPosition);
+    bool TryInteract(Vector3 cameraPosition, Transform hand);
 }
 
 /// <summary>
@@ -103,11 +108,27 @@ public static class ProximityPrompt
         var go = new GameObject(name);
         var canvas = go.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.WorldSpace;
+        // Tri au-dessus des autres canvas world-space ; le vrai anti-occlusion vient
+        // du ZTest Always sur les matériaux (voir plus bas).
+        canvas.sortingOrder = 32000;
         var rt = (RectTransform)go.transform;
         // Wider/taller than the original bottle prompt so the longer VR label
         // ("Presse les 4 gâchettes pour …") fits without clipping.
         rt.sizeDelta = new Vector2(560, 160);
         rt.localScale = Vector3.one * 0.003f;
+
+        // Panneau de fond semi-transparent pour le contraste (rendu DERRIÈRE le texte
+        // car premier enfant → dessiné en premier).
+        var bgGO = new GameObject("Background");
+        bgGO.transform.SetParent(go.transform, false);
+        var bg = bgGO.AddComponent<Image>();
+        bg.color = new Color(0f, 0f, 0f, 0.72f);
+        bg.raycastTarget = false;
+        bg.material = OverlayUIMaterial(); // toujours au-dessus de la géométrie de la maison
+        var brt = (RectTransform)bgGO.transform;
+        brt.anchorMin = Vector2.zero; brt.anchorMax = Vector2.one;
+        // Léger padding négatif pour que le fond déborde un peu autour du texte.
+        brt.offsetMin = new Vector2(-16f, -12f); brt.offsetMax = new Vector2(16f, 12f);
 
         var tmpGO = new GameObject("Text");
         tmpGO.transform.SetParent(go.transform, false);
@@ -118,22 +139,60 @@ public static class ProximityPrompt
         tmp.alignment = TextAlignmentOptions.Center;
         tmp.color = new Color(0.2f, 0.95f, 1f);
         tmp.fontStyle = FontStyles.Bold;
+        tmp.raycastTarget = false;
+        // Contour noir pour détacher le texte du décor. Accéder à outlineWidth crée
+        // un matériau instancié (fontMaterial) propre à ce prompt.
+        tmp.outlineColor = new Color32(0, 0, 0, 255);
+        tmp.outlineWidth = 0.22f;
         var trt = (RectTransform)tmpGO.transform;
         trt.anchorMin = Vector2.zero; trt.anchorMax = Vector2.one;
         trt.offsetMin = Vector2.zero; trt.offsetMax = Vector2.zero;
+        // ZTest Always sur le matériau instancié du texte → jamais masqué par les murs.
+        // fontMaterial est une copie propre à ce TMP, donc les autres textes ne bougent pas.
+        if (tmp.fontMaterial != null)
+            tmp.fontMaterial.SetFloat(_zTestProp, (float)CompareFunction.Always);
 
         go.SetActive(false);
         return go;
     }
 
-    /// <summary>Move the prompt to <paramref name="worldPos"/> and billboard it toward the camera.</summary>
+    /// <summary>Nom de la propriété ZTest du shader TMP distance field.</summary>
+    private static readonly int _zTestProp = Shader.PropertyToID("_ZTestMode");
+
+    /// <summary>
+    /// Matériau UI toujours-au-dessus (ZTest Always) pour les panneaux de fond,
+    /// partagé par tous les prompts. Le motif <c>unity_GUIZTestMode</c> est la
+    /// propriété que lit <c>ZTest [unity_GUIZTestMode]</c> du shader UI/Default.
+    /// </summary>
+    private static Material _overlayUIMat;
+    private static Material OverlayUIMaterial()
+    {
+        if (_overlayUIMat == null)
+        {
+            var sh = Shader.Find("UI/Default");
+            if (sh != null)
+            {
+                _overlayUIMat = new Material(sh) { name = "PromptOverlayUI" };
+                _overlayUIMat.SetInt("unity_GUIZTestMode", (int)CompareFunction.Always);
+            }
+        }
+        return _overlayUIMat;
+    }
+
+    /// <summary>
+    /// Place le prompt à <paramref name="worldPos"/>, le TIRE vers la caméra le long
+    /// du vecteur horizontal aplati (pour qu'il passe DEVANT les murs / niches au lieu
+    /// de s'y encastrer), puis le redresse face aux yeux (billboard en lacet).
+    /// </summary>
     public static void Face(GameObject prompt, Vector3 worldPos, Vector3 camPos)
     {
         if (prompt == null) return;
-        prompt.transform.position = worldPos;
-        Vector3 toCam = worldPos - camPos;
-        toCam.y = 0f;
-        if (toCam.sqrMagnitude > 0.001f)
-            prompt.transform.rotation = Quaternion.LookRotation(toCam, Vector3.up);
+        Vector3 toCamFlat = camPos - worldPos; toCamFlat.y = 0f;
+        Vector3 pos = worldPos;
+        if (toCamFlat.sqrMagnitude > 0.04f) pos += toCamFlat.normalized * 0.45f;
+        prompt.transform.position = pos;
+        Vector3 face = pos - camPos; face.y = 0f;
+        if (face.sqrMagnitude > 0.001f)
+            prompt.transform.rotation = Quaternion.LookRotation(face, Vector3.up);
     }
 }
