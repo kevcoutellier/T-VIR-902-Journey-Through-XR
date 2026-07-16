@@ -20,6 +20,11 @@ public class ScenarioManager : MonoBehaviour
         [Tooltip("Short verb shown to the player at the start of the scenario, e.g. 'ATTRAPE LE BÉBÉ !'")]
         [TextArea(1, 2)]
         public string actionHint = "ATTRAPE LE BÉBÉ !";
+        [Tooltip("Objectif générique affiché dans le bandeau HUD tant que le verbe d'action n'est pas " +
+                 "encore révélé (scénarios à interception S1 fourchette / S4 skate : actionHint vide " +
+                 "jusqu'à l'interception). Laisser vide pour l'objectif par défaut ('surveille l'enfant').")]
+        [TextArea(1, 2)]
+        public string objectiveHint = "";
         public Transform childSpawnPoint;
         public HazardZone hazardZone;
         public Transform playerSpawnPoint;
@@ -114,6 +119,23 @@ public class ScenarioManager : MonoBehaviour
         if (scenarios != null && index >= 0 && index < scenarios.Length)
             return scenarios[index].scenarioName;
         return "";
+    }
+
+    /// <summary>
+    /// Objectif à afficher dans le bandeau HUD tant qu'aucun verbe d'action n'est révélé
+    /// (scénarios à interception : actionHint vide au départ, dévoilé plus tard par ChildNPC.ArmCatch).
+    /// Additif — n'altère aucune signature/comportement existant. Retombe sur un objectif générique
+    /// si le scénario courant n'en définit pas.
+    /// </summary>
+    public string CurrentObjectiveFallback
+    {
+        get
+        {
+            var cfg = CurrentScenario;
+            if (cfg != null && !string.IsNullOrEmpty(cfg.objectiveHint))
+                return cfg.objectiveHint;
+            return "Objectif : surveille l'enfant";
+        }
     }
 
     private void Awake()

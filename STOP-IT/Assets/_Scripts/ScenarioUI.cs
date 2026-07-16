@@ -21,10 +21,13 @@ public class ScenarioUI : MonoBehaviour
     public TextMeshProUGUI actionHintText;
 
     [Header("Action Hint")]
-    [Tooltip("How long the action hint stays at full opacity before fading out (s)")]
+    [Tooltip("Legacy — le bandeau d'objectif reste désormais affiché toute la manche (plus de fondu auto). " +
+             "Conservé pour ne pas casser la sérialisation des scènes existantes.")]
     public float hintHoldDuration = 2f;
-    [Tooltip("How long the action hint takes to fade out (s)")]
+    [Tooltip("Legacy — plus utilisé (le bandeau ne se fond plus). Conservé pour la sérialisation.")]
     public float hintFadeDuration = 0.6f;
+    [Tooltip("Durée du petit 'pop' d'entrée du bandeau d'objectif (s).")]
+    public float hintPopDuration = 0.35f;
     public Color hintColor = new Color(0.2f, 0.95f, 1f);
 
     [Header("Settings")]
@@ -43,6 +46,7 @@ public class ScenarioUI : MonoBehaviour
     public float urgentPulseAmplitude = 0.15f;
 
     private Vector3 _timerBaseScale = Vector3.one;
+    private Vector3 _hintBaseScale = Vector3.one;
     private Coroutine _feedbackBounce;
     private Coroutine _hintRoutine;
 
@@ -56,6 +60,7 @@ public class ScenarioUI : MonoBehaviour
             var c = hintColor; c.a = 0f;
             actionHintText.color = c;
             actionHintText.text = string.Empty;
+            _hintBaseScale = actionHintText.rectTransform.localScale;
         }
         if (timerText)
         {
@@ -200,17 +205,32 @@ public class ScenarioUI : MonoBehaviour
     }
 
     /// <summary>
-    /// Called by ScenarioManager at scenario start. Shows a short verb
-    /// ("ATTRAPE LE BÉBÉ !") at full opacity, holds for hintHoldDuration,
-    /// then fades over hintFadeDuration.
+    /// Bandeau d'objectif PERSISTANT. Appelé par ScenarioManager au démarrage du
+    /// scénario (avec le verbe, ou "" pour les scénarios à interception où le verbe
+    /// n'est révélé que plus tard par ChildNPC.ArmCatch), puis à nouveau par ArmCatch
+    /// avec le vrai verbe. Le texte reste affiché TOUTE la manche (petit 'pop' d'entrée,
+    /// pas de fondu) ; il n'est effacé qu'en quittant l'état Playing (HideActionHint).
+    ///
+    /// Quand aucun verbe n'est encore connu (hint vide), on retombe sur l'objectif
+    /// générique du scénario courant (<see cref="ScenarioManager.CurrentObjectiveFallback"/>)
+    /// pour que le bandeau ne soit JAMAIS vide pendant Playing.
     /// </summary>
     public void SetActionHint(string hint)
     {
         if (actionHintText == null) return;
-        if (string.IsNullOrEmpty(hint)) { HideActionHint(); return; }
+
+        string text = string.IsNullOrEmpty(hint) ? ResolveFallbackObjective() : hint;
 
         if (_hintRoutine != null) StopCoroutine(_hintRoutine);
-        _hintRoutine = StartCoroutine(ActionHintRoutine(hint));
+        _hintRoutine = StartCoroutine(ActionHintRoutine(text));
+    }
+
+    /// <summary>Objectif générique tant que le verbe d'action n'est pas révélé (S1 fourchette / S4 skate).</summary>
+    private string ResolveFallbackObjective()
+    {
+        if (ScenarioManager.Instance != null)
+            return ScenarioManager.Instance.CurrentObjectiveFallback;
+        return "Objectif : surveille l'enfant";
     }
 
     public void HideActionHint()
@@ -220,35 +240,30 @@ public class ScenarioUI : MonoBehaviour
         var c = hintColor; c.a = 0f;
         actionHintText.color = c;
         actionHintText.text = string.Empty;
+        actionHintText.rectTransform.localScale = _hintBaseScale;
     }
 
     private IEnumerator ActionHintRoutine(string hint)
     {
         actionHintText.text = hint;
-        var c = hintColor; c.a = 1f;
-        actionHintText.color = c;
+        var full = hintColor; full.a = 1f;
+        actionHintText.color = full;
 
-        // Hold
+        // Emphase d'entrée : petit 'pop' d'échelle, puis on RESTE affiché (pas de fondu).
+        // Le bandeau ne disparaît qu'en quittant l'état Playing (HideActionHint).
+        var rt = actionHintText.rectTransform;
         float t = 0f;
-        while (t < hintHoldDuration && GameManager.Instance != null
-               && GameManager.Instance.State == GameManager.GameState.Playing)
+        float pop = Mathf.Max(0.01f, hintPopDuration);
+        while (t < pop)
         {
             t += Time.deltaTime;
+            float u = Mathf.Clamp01(t / pop);
+            float eased = 1f - Mathf.Pow(1f - u, 3f);          // ease-out cubic
+            float overshoot = 1f + 0.12f * Mathf.Sin(u * Mathf.PI); // petit rebond
+            rt.localScale = _hintBaseScale * (Mathf.Lerp(0.6f, 1f, eased) * overshoot);
             yield return null;
         }
-
-        // Fade
-        t = 0f;
-        while (t < hintFadeDuration)
-        {
-            t += Time.deltaTime;
-            float a = Mathf.Clamp01(1f - t / hintFadeDuration);
-            var col = hintColor; col.a = a;
-            actionHintText.color = col;
-            yield return null;
-        }
-
-        actionHintText.text = string.Empty;
+        rt.localScale = _hintBaseScale;
         _hintRoutine = null;
     }
 }
