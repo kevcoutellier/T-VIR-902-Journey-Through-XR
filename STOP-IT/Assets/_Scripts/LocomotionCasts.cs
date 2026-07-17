@@ -50,7 +50,13 @@ public static class LocomotionCasts
         bool found = false;
         for (int i = 0; i < count; i++)
         {
-            if (IsNpc(buf[i].collider)) continue;   // never a wall/floor: the player walks right up to the toddler
+            if (IsNpc(buf[i].collider)) continue;   // player walks right up to the toddler; never a wall
+            // Skip INITIAL OVERLAPS (distance ~0). The single-hit Physics.CapsuleCast/Raycast the rigs
+            // used before reported the first surface the sweep ENTERS, not colliders already touching the
+            // capsule; a *NonAlloc cast returns those as distance-0 hits with a degenerate normal. Counting
+            // one as a "wall ahead" wrongly blocks ALL movement — this froze the DESKTOP rig, whose capsule
+            // bottom sits right on the floor (the VR capsule starts higher, so it never tripped this).
+            if (buf[i].distance <= 1e-4f) continue;
             if (buf[i].distance < bestDist)
             {
                 bestDist = buf[i].distance;
