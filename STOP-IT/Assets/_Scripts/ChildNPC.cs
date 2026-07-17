@@ -39,6 +39,16 @@ public class ChildNPC : MonoBehaviour
     [Tooltip("Seconds of idle pause before the child starts moving")]
     public float startDelay = 1.5f;
 
+    [Header("Anti-bob (stay on the real floor)")]
+    [Tooltip("The house NavMesh is baked from ALL physics colliders (furniture included), so the agent's " +
+             "VERTICAL output bobs ~0.8 m as it 'climbs' furniture baked as walkable — reads in-game as the " +
+             "toddler teleporting. Horizontal navigation is fine; this only overrides the HEIGHT each frame " +
+             "with a raycast to the real floor beneath the child. Turn off only if a scenario genuinely needs " +
+             "the AGENT (not a scripted beat) to walk up a slope/stairs.")]
+    public bool keepOnFloor = true;
+    [Tooltip("Layers the floor raycast may hit (leave as Everything; the toddler itself is always skipped).")]
+    public LayerMask floorMask = ~0;
+
     [Header("Dynamic Retargeting")]
     [Tooltip("How often (seconds) to refresh the NavMesh destination if the target moves.")]
     public float repathInterval = 0.15f;
@@ -400,6 +410,34 @@ public class ChildNPC : MonoBehaviour
         }
 
         AnimateWalk();
+    }
+
+    /// <summary>
+    /// Keep the toddler on the REAL floor. The house NavMesh is baked from every physics collider
+    /// (furniture included), so the NavMeshAgent's vertical output bobs ~0.8 m as it walks over furniture
+    /// that got baked as walkable — which reads in-game as the child teleporting. Horizontal navigation is
+    /// correct, so we only override the HEIGHT: after the agent has moved us, snap Y down to the lowest
+    /// horizontal surface beneath the child (the actual floor), ignoring furniture tops. Skipped while the
+    /// agent is disabled — the scripted beats (chair lift, skate slide, window fall) set their own Y.
+    /// </summary>
+    private void LateUpdate()
+    {
+        if (!keepOnFloor) return;
+        if (_agent == null || !_agent.enabled || !_agent.isOnNavMesh) return;
+
+        Vector3 from = transform.position + Vector3.up * 1.2f;
+        var hits = Physics.RaycastAll(from, Vector3.down, 3f, floorMask, QueryTriggerInteraction.Ignore);
+        float floorY = float.NaN;
+        for (int i = 0; i < hits.Length; i++)
+        {
+            if (hits[i].normal.y < 0.7f) continue;                                   // horizontal surfaces only
+            if (hits[i].collider.GetComponentInParent<ChildNPC>() != null) continue; // never ourselves
+            if (float.IsNaN(floorY) || hits[i].point.y < floorY) floorY = hits[i].point.y; // lowest = real floor
+        }
+        if (!float.IsNaN(floorY) && Mathf.Abs(transform.position.y - floorY) > 0.001f)
+        {
+            Vector3 p = transform.position; p.y = floorY; transform.position = p;
+        }
     }
 
     // ── Public API ─────────────────────────────────────────────────────────
