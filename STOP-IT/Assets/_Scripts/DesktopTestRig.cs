@@ -117,6 +117,12 @@ public class DesktopTestRig : MonoBehaviour
         var binder = GetComponent<XRLocomotionBinder>();
         if (binder != null) binder.enabled = false;
 
+        // Desktop is the authority for its OWN mode: the XRI controller MODELS (and their
+        // controller-mounted ChildGrabber / PlayerBlocker) are VR-only PRESENTATION baked under the
+        // XR rig. With no HMD they'd float in front of the desktop camera and could even phantom-grab
+        // the baby. Hide the whole controller objects here — DesktopTestRig spawns its own hands.
+        HideVrControllers();
+
         // Capture starting yaw/pitch from the current camera rotation.
         Vector3 e = _camera.transform.eulerAngles;
         _pitch = NormalizeAngle(e.x);
@@ -231,8 +237,9 @@ public class DesktopTestRig : MonoBehaviour
         Vector3 top    = bottom + Vector3.up * Mathf.Max(0.01f, playerHeight - playerRadius * 2f);
         Vector3 dirN = desired.normalized;
 
-        if (Physics.CapsuleCast(bottom, top, playerRadius, dirN, out RaycastHit hit,
-                                desired.magnitude + 0.02f, wallMask, QueryTriggerInteraction.Ignore))
+        // Shared cast: skips the toddler so walking up to the baby never slides/steps the rig
+        // (the same "ignore the NPC" rule the VR rig uses — one source of truth in LocomotionCasts).
+        if (LocomotionCasts.Capsule(bottom, top, playerRadius, dirN, desired.magnitude + 0.02f, wallMask, out RaycastHit hit))
         {
             // 1. Walkable slope (ramp). The ground probe handles the Y lift —
             //    just let the horizontal move through.
@@ -245,17 +252,15 @@ public class DesktopTestRig : MonoBehaviour
             //    forward) so they land properly on its surface.
             Vector3 raisedBottom = bottom + Vector3.up * stepHeight;
             Vector3 raisedTop = top + Vector3.up * stepHeight;
-            if (!Physics.CapsuleCast(raisedBottom, raisedTop, playerRadius, dirN,
-                                     out _, desired.magnitude + 0.02f, wallMask,
-                                     QueryTriggerInteraction.Ignore))
+            if (!LocomotionCasts.Capsule(raisedBottom, raisedTop, playerRadius, dirN,
+                                         desired.magnitude + 0.02f, wallMask, out _))
             {
                 // Probe origin must be past the obstacle's face. desired.magnitude
                 // is one frame of motion (tiny); we need to clear at least the
                 // capsule radius + a small epsilon to reach the obstacle's top.
                 float probeForward = Mathf.Max(0.15f, desired.magnitude + playerRadius + 0.05f);
                 Vector3 probeOrigin = raisedBottom + dirN * probeForward;
-                if (Physics.Raycast(probeOrigin, Vector3.down, out RaycastHit gh,
-                                    stepHeight * 1.5f, wallMask, QueryTriggerInteraction.Ignore))
+                if (LocomotionCasts.Ground(probeOrigin, stepHeight * 1.5f, wallMask, out RaycastHit gh))
                 {
                     float currentY = _xrOrigin.transform.position.y;
                     float climb = gh.point.y - currentY;
@@ -285,8 +290,8 @@ public class DesktopTestRig : MonoBehaviour
             n.Normalize();
             float into = Vector3.Dot(desired, -n);
             if (into > 0f) desired += n * into;
-            if (Physics.CapsuleCast(bottom, top, playerRadius, desired.normalized, out _,
-                                    desired.magnitude + 0.02f, wallMask, QueryTriggerInteraction.Ignore))
+            if (LocomotionCasts.Capsule(bottom, top, playerRadius, desired.normalized,
+                                        desired.magnitude + 0.02f, wallMask, out _))
                 return Vector3.zero;
         }
         return desired;
@@ -304,8 +309,8 @@ public class DesktopTestRig : MonoBehaviour
         // starting inside a step's collider when climbing stairs.
         float groundY = float.NegativeInfinity;
         Vector3 probeOrigin = pos + Vector3.up * 0.1f;
-        if (Physics.Raycast(probeOrigin, Vector3.down, out RaycastHit hit,
-                            groundProbeDistance + 0.1f, groundMask, QueryTriggerInteraction.Ignore))
+        // Shared cast skips the toddler, so standing near/over the baby never snaps the floor onto its head.
+        if (LocomotionCasts.Ground(probeOrigin, groundProbeDistance + 0.1f, groundMask, out RaycastHit hit))
         {
             groundY = hit.point.y;
         }
@@ -459,6 +464,20 @@ public class DesktopTestRig : MonoBehaviour
         Destroy(_grabHand);
         _grabHand = null;
         _grabHandComponent = null;
+    }
+
+    /// <summary>Hide the VR controller objects (models + their grabbers) on desktop — VR-only presentation.</summary>
+    private void HideVrControllers()
+    {
+        Transform root = _xrOrigin != null ? _xrOrigin.transform : transform;
+        HideByName(root, "Left Controller");
+        HideByName(root, "Right Controller");
+    }
+
+    private static void HideByName(Transform root, string name)
+    {
+        foreach (var t in root.GetComponentsInChildren<Transform>(true))
+            if (t.name == name) { t.gameObject.SetActive(false); return; }
     }
 
     private Vector3 ComputeHandPosition(float distance)

@@ -140,8 +140,23 @@ public class MenuRoamingNPC : MonoBehaviour
             SetVisible(roam);
         }
 
-        if (_agent != null && _agent.isActiveAndEnabled && _agent.isOnNavMesh)
-            _agent.isStopped = !roam;
+        // A frozen stroller must fully LEAVE the NavMesh, not just stop: an enabled-but-stopped
+        // NavMeshAgent still carves an RVO avoidance footprint that can deflect the GAMEPLAY baby's
+        // path (the menu cinematic baby must never interfere with gameplay — in EITHER mode). So we
+        // disable the agent entirely while not roaming, and re-enable it when roaming resumes.
+        if (_agent != null)
+        {
+            if (roam)
+            {
+                if (!_agent.enabled) _agent.enabled = true;
+                if (_agent.isActiveAndEnabled && _agent.isOnNavMesh) _agent.isStopped = false;
+            }
+            else
+            {
+                if (_agent.isActiveAndEnabled && _agent.isOnNavMesh) _agent.isStopped = true;
+                _agent.enabled = false;
+            }
+        }
 
         if (roam)
         {
