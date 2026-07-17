@@ -40,14 +40,19 @@ public class ChildNPC : MonoBehaviour
     public float startDelay = 1.5f;
 
     [Header("Anti-bob (stay on the real floor)")]
-    [Tooltip("The house NavMesh is baked from ALL physics colliders (furniture included), so the agent's " +
-             "VERTICAL output bobs ~0.8 m as it 'climbs' furniture baked as walkable — reads in-game as the " +
-             "toddler teleporting. Horizontal navigation is fine; this only overrides the HEIGHT each frame " +
-             "with a raycast to the real floor beneath the child. Turn off only if a scenario genuinely needs " +
-             "the AGENT (not a scripted beat) to walk up a slope/stairs.")]
+    [Tooltip("The house NavMesh is baked from ALL colliders (furniture included), so the NavMeshAgent's " +
+             "VERTICAL output bobs ~0.8 m as it rides furniture baked as walkable — reads in-game as the " +
+             "toddler teleporting. With this ON, ChildNPC takes over the transform (agent.updatePosition=false): " +
+             "it copies the agent's horizontal path but gravity-clamps the HEIGHT (fast down, slow up) so the " +
+             "child hugs the floor instead of climbing furniture. Turn off only to restore vanilla agent motion.")]
     public bool keepOnFloor = true;
-    [Tooltip("Layers the floor raycast may hit (leave as Everything; the toddler itself is always skipped).")]
-    public LayerMask floorMask = ~0;
+    [Tooltip("How fast (m/s) the child settles DOWN toward the floor. High = snaps to the floor quickly.")]
+    public float floorFallSpeed = 8f;
+    [Tooltip("How fast (m/s) the child may rise. Low = resists climbing furniture the NavMesh baked as walkable.")]
+    public float floorRiseSpeed = 0.25f;
+
+    private float _clampY;
+    private bool _clampYInit;
 
     [Header("Dynamic Retargeting")]
     [Tooltip("How often (seconds) to refresh the NavMesh destination if the target moves.")]
@@ -226,6 +231,12 @@ public class ChildNPC : MonoBehaviour
         // updateRotation on, it would overwrite FaceToward every frame and the child would
         // face its arrival direction instead of the appliance (the "not facing the microwave" bug).
         _agent.updateRotation = false;
+
+        // WE own the toddler's transform when keepOnFloor is on (see LateUpdate). The house NavMesh is baked
+        // from all colliders (furniture included), so the agent's vertical output would bob ~0.8 m as it rides
+        // furniture baked as walkable. updatePosition=false stops the agent re-writing our corrected height
+        // every frame (which is why the earlier LateUpdate-only fix silently did nothing — the agent won).
+        if (keepOnFloor) _agent.updatePosition = false;
 
         // Ensure the "Child" tag is set so PlayerBlocker can detect us.
         try { if (!CompareTag("Child")) tag = "Child"; } catch { /* tag not defined yet — fine */ }
@@ -413,31 +424,24 @@ public class ChildNPC : MonoBehaviour
     }
 
     /// <summary>
-    /// Keep the toddler on the REAL floor. The house NavMesh is baked from every physics collider
-    /// (furniture included), so the NavMeshAgent's vertical output bobs ~0.8 m as it walks over furniture
-    /// that got baked as walkable — which reads in-game as the child teleporting. Horizontal navigation is
-    /// correct, so we only override the HEIGHT: after the agent has moved us, snap Y down to the lowest
-    /// horizontal surface beneath the child (the actual floor), ignoring furniture tops. Skipped while the
-    /// agent is disabled — the scripted beats (chair lift, skate slide, window fall) set their own Y.
+    /// Keep the toddler on the real floor. Because the house NavMesh is baked from every collider (furniture
+    /// included), the NavMeshAgent's vertical output bobs ~0.8 m as it rides furniture baked as walkable — which
+    /// reads in-game as the child teleporting. With keepOnFloor, agent.updatePosition is false (see Awake), so WE
+    /// drive the transform here: copy the agent's HORIZONTAL path (which is correct) and gravity-clamp the HEIGHT
+    /// (settle DOWN fast, rise SLOWLY), so the child hugs the floor and only briefly nudges up over furniture
+    /// instead of leaping onto it. Skipped while the agent is disabled so the scripted beats (chair lift, skate
+    /// slide, window fall) keep setting their own position; _clampY re-initialises when the agent resumes.
     /// </summary>
     private void LateUpdate()
     {
         if (!keepOnFloor) return;
-        if (_agent == null || !_agent.enabled || !_agent.isOnNavMesh) return;
+        if (_agent == null || !_agent.enabled || !_agent.isOnNavMesh) { _clampYInit = false; return; }
 
-        Vector3 from = transform.position + Vector3.up * 1.2f;
-        var hits = Physics.RaycastAll(from, Vector3.down, 3f, floorMask, QueryTriggerInteraction.Ignore);
-        float floorY = float.NaN;
-        for (int i = 0; i < hits.Length; i++)
-        {
-            if (hits[i].normal.y < 0.7f) continue;                                   // horizontal surfaces only
-            if (hits[i].collider.GetComponentInParent<ChildNPC>() != null) continue; // never ourselves
-            if (float.IsNaN(floorY) || hits[i].point.y < floorY) floorY = hits[i].point.y; // lowest = real floor
-        }
-        if (!float.IsNaN(floorY) && Mathf.Abs(transform.position.y - floorY) > 0.001f)
-        {
-            Vector3 p = transform.position; p.y = floorY; transform.position = p;
-        }
+        Vector3 next = _agent.nextPosition;              // agent's target: horizontal is good, Y bobs on furniture
+        if (!_clampYInit) { _clampY = next.y; _clampYInit = true; }
+        float rate = (next.y < _clampY ? floorFallSpeed : floorRiseSpeed) * Time.deltaTime;
+        _clampY = Mathf.MoveTowards(_clampY, next.y, rate);
+        transform.position = new Vector3(next.x, _clampY, next.z);
     }
 
     // ── Public API ─────────────────────────────────────────────────────────
